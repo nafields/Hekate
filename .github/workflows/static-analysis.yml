@@ -1,0 +1,73 @@
+name: Static Analysis
+
+on:
+  push:
+    branches: [ main, develop, 'copilot/**' ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  cppcheck:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install cppcheck
+      run: sudo apt-get update && sudo apt-get install -y cppcheck
+      
+    - name: Run cppcheck on USB files
+      run: |
+        cppcheck --enable=warning,style,performance,portability \
+                 --error-exitcode=0 \
+                 --inline-suppr \
+                 -I bdk \
+                 --suppress=missingIncludeSystem \
+                 --suppress=unusedFunction \
+                 bdk/usb/xhci.c \
+                 bdk/usb/usb_msc_host.c \
+                 nyx/nyx_gui/emummc_storage_usb.c \
+                 2>&1 | tee cppcheck-results.txt
+                 
+    - name: Upload cppcheck results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: cppcheck-results
+        path: cppcheck-results.txt
+          
+  documentation-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Check documentation exists
+      run: |
+        test -f README_USB_STORAGE.md || { echo "Missing README_USB_STORAGE.md"; exit 1; }
+        test -f IMPLEMENTATION_STATUS.md || { echo "Missing IMPLEMENTATION_STATUS.md"; exit 1; }
+        test -f DEVELOPMENT_SUMMARY.md || { echo "Missing DEVELOPMENT_SUMMARY.md"; exit 1; }
+        test -f CODE_REVIEW_SUGGESTIONS.md || { echo "Missing CODE_REVIEW_SUGGESTIONS.md"; exit 1; }
+        test -f TESTING_FRAMEWORK.md || { echo "Missing TESTING_FRAMEWORK.md"; exit 1; }
+        echo "✅ All documentation files present"
+        
+    - name: Check for TODO markers
+      run: |
+        echo "Checking for TODO/FIXME markers in code..."
+        echo "Found in USB files:"
+        grep -rn "TODO\|FIXME\|XXX" bdk/usb/ nyx/nyx_gui/emummc_storage_usb.c || echo "None"
+        
+    - name: Verify header guards
+      run: |
+        echo "Checking header guards..."
+        for f in bdk/usb/*.h nyx/nyx_gui/emummc_storage_usb.h; do
+          if [ -f "$f" ]; then
+            echo "Checking $f"
+            grep -q "#ifndef.*_H" "$f" || { echo "Missing header guard in $f"; exit 1; }
+            grep -q "#define.*_H" "$f" || { echo "Missing header guard in $f"; exit 1; }
+            grep -q "#endif" "$f" || { echo "Missing #endif in $f"; exit 1; }
+          fi
+        done
+        echo "✅ All header guards present"

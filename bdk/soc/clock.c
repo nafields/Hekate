@@ -994,3 +994,30 @@ u32 clock_get_dev_freq(clock_pto_id_t id)
 	return freq_khz;
 }
 
+void clock_enable_xusb_host()
+{
+	// Enable XUSB_HOST clock
+	CLOCK(CLK_RST_CONTROLLER_CLK_ENB_U_SET) = BIT(CLK_U_XUSB_HOST);
+	usleep(2);
+	// Clear reset
+	CLOCK(CLK_RST_CONTROLLER_RST_DEV_U_CLR) = BIT(CLK_U_XUSB_HOST);
+}
+
+void clock_enable_xusb_ss()
+{
+	// Enable XUSB_SS clock
+	CLOCK(CLK_RST_CONTROLLER_CLK_ENB_W_SET) = BIT(CLK_W_XUSB_SS);
+	usleep(2);
+	// Clear reset
+	CLOCK(CLK_RST_CONTROLLER_RST_DEV_W_CLR) = BIT(CLK_W_XUSB_SS);
+}
+
+void clock_enable_xusb_fs()
+{
+	// Enable XUSB (FS/DEV) clock  
+	CLOCK(CLK_RST_CONTROLLER_CLK_ENB_W_SET) = BIT(CLK_W_XUSB);
+	usleep(2);
+	// Clear reset
+	CLOCK(CLK_RST_CONTROLLER_RST_DEV_W_CLR) = BIT(CLK_W_XUSB);
+}
+

@@ -1,0 +1,73 @@
+name: Build Check
+
+on:
+  push:
+    branches: [ main, develop, 'copilot/**' ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  build-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        
+    - name: Cache devkitARM
+      uses: actions/cache@v3
+      id: cache-devkitarm
+      with:
+        path: /opt/devkitpro
+        key: ${{ runner.os }}-devkitarm-r64
+        
+    - name: Install devkitARM
+      if: steps.cache-devkitarm.outputs.cache-hit != 'true'
+      run: |
+        wget https://github.com/devkitPro/pacman/releases/latest/download/devkitpro-pacman.amd64.deb
+        sudo dpkg -i devkitpro-pacman.amd64.deb
+        sudo dkp-pacman -Sy
+        sudo dkp-pacman -S --noconfirm devkitARM
+        
+    - name: Set environment variables
+      run: |
+        echo "DEVKITPRO=/opt/devkitpro" >> $GITHUB_ENV
+        echo "DEVKITARM=/opt/devkitpro/devkitARM" >> $GITHUB_ENV
+        echo "/opt/devkitpro/devkitARM/bin" >> $GITHUB_PATH
+        
+    - name: Build bootloader
+      run: |
+        make -j$(nproc)
+        
+    - name: Build Nyx
+      run: |
+        cd nyx
+        make -j$(nproc)
+        
+    - name: Check USB objects were built
+      run: |
+        echo "Checking USB host object files..."
+        test -f nyx/build/nyx/xhci.o || { echo "Error: xhci.o not built"; exit 1; }
+        test -f nyx/build/nyx/usb_msc_host.o || { echo "Error: usb_msc_host.o not built"; exit 1; }
+        test -f nyx/build/nyx/emummc_storage_usb.o || { echo "Error: emummc_storage_usb.o not built"; exit 1; }
+        echo "✅ All USB objects built successfully"
+        
+    - name: Upload artifacts
+      if: success()
+      uses: actions/upload-artifact@v3
+      with:
+        name: hekate-binaries
+        path: |
+          output/*.bin
+          nyx/output/*.bin
+        retention-days: 7
+        
+    - name: Check file sizes
+      run: |
+        echo "Bootloader binary sizes:"
+        ls -lh output/*.bin
+        echo ""
+        echo "Nyx binary sizes:"
+        ls -lh nyx/output/*.bin
