@@ -56,7 +56,9 @@ static void _cache_init(void) {
 	if (!g_cache.data) {
 		g_cache.data = (u8 *)malloc(CACHE_SIZE_SECTORS * SECTOR_SIZE_BYTES);
 		if (!g_cache.data) {
-			/* Failed to allocate cache, continue without caching */
+			/* Failed to allocate cache - continue without caching.
+			 * This is not fatal; reads/writes will bypass the cache
+			 * and go directly to the USB device. */
 			return;
 		}
 	}
