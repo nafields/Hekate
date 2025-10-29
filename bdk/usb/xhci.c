@@ -282,22 +282,146 @@ int xhci_port_reset(xhci_controller_t *xhci, u8 port) {
 	return 0;
 }
 
-// Placeholder implementations for enumeration and transfers
-// These will be implemented in subsequent phases
+static int _xhci_send_command(xhci_controller_t *xhci, xhci_trb_t *trb) {
+	u32 idx = xhci->cmd_ring_enqueue;
+	
+	/* Copy TRB to command ring */
+	memcpy(&xhci->cmd_ring[idx], trb, sizeof(xhci_trb_t));
+	xhci->cmd_ring[idx].control |= xhci->cmd_ring_cycle;
+	
+	/* Ring doorbell */
+	xhci_write32(xhci->doorbell_base, 0);
+	
+	/* Advance enqueue pointer */
+	idx++;
+	if (idx >= (XHCI_RING_SIZE - 1)) {
+		idx = 0;
+		xhci->cmd_ring_cycle ^= 1;
+	}
+	xhci->cmd_ring_enqueue = idx;
+	
+	/* Wait for command completion event */
+	/* This is a simplified implementation - proper implementation would */
+	/* poll event ring and match completion code */
+	usleep(10000); /* 10ms timeout */
+	
+	return 0;
+}
+
+static int _xhci_enable_slot(xhci_controller_t *xhci) {
+	xhci_trb_t cmd_trb;
+	
+	memset(&cmd_trb, 0, sizeof(cmd_trb));
+	cmd_trb.control = (XHCI_TRB_CMD_ENABLE_SLOT << 10);
+	
+	int ret = _xhci_send_command(xhci, &cmd_trb);
+	if (ret < 0)
+		return ret;
+	
+	/* In real implementation, slot ID would come from completion event */
+	/* For now, use next available slot */
+	xhci->current_slot++;
+	if (xhci->current_slot > xhci->max_slots)
+		return -1;
+	
+	return xhci->current_slot;
+}
+
+static int _xhci_address_device(xhci_controller_t *xhci, u8 slot, u8 port) {
+	xhci_trb_t cmd_trb;
+	
+	/* Allocate device context if not already allocated */
+	if (!xhci->device_ctx[slot]) {
+		xhci->device_ctx[slot] = (xhci_device_ctx_t *)calloc(1, sizeof(xhci_device_ctx_t));
+		if (!xhci->device_ctx[slot])
+			return -1;
+	}
+	
+	/* Set device context in DCBAAP */
+	xhci->dcbaap[slot] = (u64)(u32)xhci->device_ctx[slot];
+	
+	/* Initialize slot context */
+	xhci_slot_ctx_t *slot_ctx = &xhci->device_ctx[slot]->slot;
+	slot_ctx->info = (1 << 27); /* Context entries = 1 (EP0 only initially) */
+	slot_ctx->info2 = (port << 16); /* Root hub port number */
+	
+	/* Initialize EP0 context */
+	xhci_ep_ctx_t *ep0_ctx = &xhci->device_ctx[slot]->ep[0];
+	ep0_ctx->ep_info = (4 << 3); /* EP type = Control */
+	ep0_ctx->ep_info2 = (64 << 16) | (0 << 8); /* Max packet size = 64, Max burst = 0 */
+	
+	/* Allocate transfer ring for EP0 */
+	if (!xhci->transfer_rings[slot][0]) {
+		xhci->transfer_rings[slot][0] = (xhci_trb_t *)calloc(XHCI_RING_SIZE, sizeof(xhci_trb_t));
+		if (!xhci->transfer_rings[slot][0])
+			return -1;
+		xhci->transfer_ring_cycle[slot][0] = 1;
+		xhci->transfer_ring_enqueue[slot][0] = 0;
+	}
+	
+	ep0_ctx->deq_ptr_lo = ((u32)xhci->transfer_rings[slot][0] & ~0xF) | 1; /* DCS = 1 */
+	ep0_ctx->deq_ptr_hi = 0;
+	
+	/* Send ADDRESS DEVICE command */
+	memset(&cmd_trb, 0, sizeof(cmd_trb));
+	cmd_trb.param1 = (u32)xhci->device_ctx[slot];
+	cmd_trb.control = (XHCI_TRB_CMD_ADDRESS_DEV << 10) | (slot << 24);
+	
+	return _xhci_send_command(xhci, &cmd_trb);
+}
 
 int xhci_enumerate_device(xhci_controller_t *xhci, u8 port) {
-	// TODO: Implement device enumeration
-	return -1;
+	int ret;
+	
+	if (!xhci || port == 0)
+		return -1;
+	
+	/* Check if device is connected */
+	u32 portsc_addr = xhci->op_base + XHCI_OP_PORTSC(port - 1);
+	u32 portsc = xhci_read32(portsc_addr);
+	if (!(portsc & XHCI_PORTSC_CCS))
+		return -1; /* No device connected */
+	
+	/* Enable slot */
+	ret = _xhci_enable_slot(xhci);
+	if (ret < 0)
+		return ret;
+	
+	u8 slot = ret;
+	
+	/* Address device */
+	ret = _xhci_address_device(xhci, slot, port);
+	if (ret < 0)
+		return ret;
+	
+	/* Device is now addressed and ready for further configuration */
+	/* Configuration of endpoints would happen here based on descriptors */
+	
+	return 0;
 }
 
 int xhci_control_transfer(xhci_controller_t *xhci, u8 slot, u8 ep, 
                           void *setup, void *data, u32 len) {
-	// TODO: Implement control transfers
+	if (!xhci || slot == 0 || slot > xhci->max_slots)
+		return -1;
+	
+	/* This is a simplified stub implementation */
+	/* Full implementation would queue SETUP, DATA (optional), and STATUS TRBs */
+	/* on the transfer ring and wait for completion */
+	
+	/* For now, just return error to indicate not fully implemented */
 	return -1;
 }
 
 int xhci_bulk_transfer(xhci_controller_t *xhci, u8 slot, u8 ep, 
                        void *data, u32 len, bool in) {
-	// TODO: Implement bulk transfers
+	if (!xhci || slot == 0 || slot > xhci->max_slots)
+		return -1;
+	
+	/* This is a simplified stub implementation */
+	/* Full implementation would queue NORMAL TRBs on the transfer ring */
+	/* and wait for transfer completion events */
+	
+	/* For now, just return error to indicate not fully implemented */
 	return -1;
 }
