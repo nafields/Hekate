@@ -17,10 +17,11 @@
  */
 
 #include <string.h>
-#include <storage/emummc_storage_usb.h>
+#include "emummc_storage_usb.h"
 #include <usb/xhci.h>
 #include <usb/usb_msc_host.h>
 #include <mem/heap.h>
+#include <soc/timer.h>
 
 /* Configuration flags */
 #define USB_STORAGE_READ_ONLY       1
