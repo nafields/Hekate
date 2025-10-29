@@ -28,9 +28,14 @@
 #define USB_STORAGE_REQUIRE_HUB     1
 #define USB_STORAGE_CACHE_ENABLED   1
 
-/* Sector cache configuration */
-#define CACHE_SIZE_SECTORS  64
-#define CACHE_INVALID       0xFFFFFFFF
+/* USB configuration */
+#define USB_DEFAULT_PORT            1
+#define USB_DEVICE_SPINUP_DELAY_US  1000000  /* 1 second */
+
+/* Sector configuration */
+#define SECTOR_SIZE_BYTES           512
+#define CACHE_SIZE_SECTORS          64
+#define CACHE_INVALID               0xFFFFFFFF
 
 typedef struct _sector_cache_t {
 	u32 start_lba;
@@ -49,7 +54,11 @@ static void _cache_init(void) {
 	g_cache.start_lba = CACHE_INVALID;
 	g_cache.count = 0;
 	if (!g_cache.data) {
-		g_cache.data = (u8 *)malloc(CACHE_SIZE_SECTORS * 512);
+		g_cache.data = (u8 *)malloc(CACHE_SIZE_SECTORS * SECTOR_SIZE_BYTES);
+		if (!g_cache.data) {
+			/* Failed to allocate cache, continue without caching */
+			return;
+		}
 	}
 }
 
@@ -63,8 +72,8 @@ static int _cache_read(u32 lba, u32 count, void *buffer) {
 	if (g_cache.start_lba != CACHE_INVALID &&
 	    lba >= g_cache.start_lba &&
 	    (lba + count) <= (g_cache.start_lba + g_cache.count)) {
-		u32 offset = (lba - g_cache.start_lba) * 512;
-		memcpy(buffer, g_cache.data + offset, count * 512);
+		u32 offset = (lba - g_cache.start_lba) * SECTOR_SIZE_BYTES;
+		memcpy(buffer, g_cache.data + offset, count * SECTOR_SIZE_BYTES);
 		return 0;
 	}
 	return -1;
@@ -76,7 +85,7 @@ static void _cache_update(u32 lba, u32 count, void *buffer) {
 	
 	g_cache.start_lba = lba;
 	g_cache.count = count;
-	memcpy(g_cache.data, buffer, count * 512);
+	memcpy(g_cache.data, buffer, count * SECTOR_SIZE_BYTES);
 }
 
 int emummc_storage_usb_init(void) {
@@ -92,12 +101,12 @@ int emummc_storage_usb_init(void) {
 	
 	/* TODO: Check for powered hub requirement */
 	
-	/* Reset and enumerate device on port 1 */
-	ret = xhci_port_reset(&g_xhci, 1);
+	/* Reset and enumerate device on default port */
+	ret = xhci_port_reset(&g_xhci, USB_DEFAULT_PORT);
 	if (ret < 0)
 		goto cleanup;
 	
-	ret = xhci_enumerate_device(&g_xhci, 1);
+	ret = xhci_enumerate_device(&g_xhci, USB_DEFAULT_PORT);
 	if (ret < 0)
 		goto cleanup;
 	
@@ -110,7 +119,7 @@ int emummc_storage_usb_init(void) {
 	ret = usb_msc_test_unit_ready(&g_msc_dev);
 	if (ret < 0) {
 		/* Device might need time to spin up */
-		usleep(1000000); /* 1 second */
+		usleep(USB_DEVICE_SPINUP_DELAY_US);
 		ret = usb_msc_test_unit_ready(&g_msc_dev);
 		if (ret < 0)
 			goto cleanup;
