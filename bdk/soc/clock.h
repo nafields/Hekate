@@ -799,4 +799,8 @@ void clock_sdmmc_disable(u32 id);
 u32 clock_get_osc_freq();
 u32 clock_get_dev_freq(clock_pto_id_t id);
 
+void clock_enable_xusb_host();
+void clock_enable_xusb_ss();
+void clock_enable_xusb_fs();
+
 #endif
