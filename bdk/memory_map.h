@@ -117,6 +117,11 @@
 #define USB_EP_BULK_OUT_BUF_ADDR  0xFF800000
 #define  USB_EP_BULK_OUT_MAX_XFER      SZ_8M
 
+// USB host buffers (device and host modes are mutually exclusive).
+#define USBH_BULK_IN_BUF_ADDR     0xFF100000
+#define USBH_BULK_OUT_BUF_ADDR    0xFF200000
+#define  USBH_BULK_BUF_SZ              SZ_1M
+
 // #define EXT_PAYLOAD_ADDR    0xC0000000
 // #define RCM_PAYLOAD_ADDR    (EXT_PAYLOAD_ADDR + ALIGN(PATCHED_RELOC_SZ, 0x10))
 // #define COREBOOT_ADDR       (0xD0000000 - rom_size)

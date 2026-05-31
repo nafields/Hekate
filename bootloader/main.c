@@ -31,6 +31,7 @@
 #include <libs/compr/blz.h>
 #include <libs/fatfs/ff.h>
 #include "storage/emummc.h"
+#include <usb/usbh.h>
 
 #include "frontend/fe_tools.h"
 #include "frontend/fe_info.h"
@@ -1487,6 +1488,11 @@ void ipl_main()
 
 	// Mount SD Card.
 	h_cfg.errors |= !sd_mount() ? ERR_SD_BOOT_EN : 0;
+
+	// Probe for a USB emuMMC drive (non-blocking; failure is silent).
+	emummc_load_cfg();
+	if (emu_cfg.usb_enabled)
+		usbh_init();
 
 	// Check if watchdog was fired previously.
 	if (watchdog_fired())
