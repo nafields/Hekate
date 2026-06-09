@@ -28,10 +28,15 @@ int usb_blkdev_init(usb_blkdev_t *dev)
 }
 
 /*
- * Read count 512-byte sectors starting at sector from the USB drive.
+ * Read/write count 512-byte sectors starting at sector on the USB drive.
  * Applies the LBA offset stored in dev->sector_start.
  */
 int usb_blkdev_read(usb_blkdev_t *dev, u32 sector, u32 count, void *buf)
 {
 	return usbh_msc_read(sector + dev->sector_start, count, buf);
+}
+
+int usb_blkdev_write(usb_blkdev_t *dev, u32 sector, u32 count, void *buf)
+{
+	return usbh_msc_write(sector + dev->sector_start, count, buf);
 }

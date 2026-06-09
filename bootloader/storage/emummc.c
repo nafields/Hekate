@@ -202,8 +202,8 @@ int emummc_storage_read(u32 sector, u32 num_sectors, void *buf)
 	FIL fp;
 	if (!emu_cfg.enabled || h_cfg.emummc_force_disable)
 		return sdmmc_storage_read(&emmc_storage, sector, num_sectors, buf);
-	else if (emu_cfg.usb_enabled)
-		return usb_blkdev_read(usb_blkdev_get(), sector, num_sectors, buf);
+	else if (emu_cfg.usb_enabled) // usb_blkdev returns 0 on success; callers expect 1.
+		return usb_blkdev_read(usb_blkdev_get(), sector, num_sectors, buf) ? 0 : 1;
 	else if (emu_cfg.sector)
 	{
 		sector += emu_cfg.sector;
@@ -249,6 +249,8 @@ int emummc_storage_write(u32 sector, u32 num_sectors, void *buf)
 	FIL fp;
 	if (!emu_cfg.enabled || h_cfg.emummc_force_disable)
 		return sdmmc_storage_write(&emmc_storage, sector, num_sectors, buf);
+	else if (emu_cfg.usb_enabled) // Must come before SD branches: USB offsets are not SD offsets.
+		return usb_blkdev_write(usb_blkdev_get(), sector, num_sectors, buf) ? 0 : 1;
 	else if (emu_cfg.sector)
 	{
 		sector += emu_cfg.sector;

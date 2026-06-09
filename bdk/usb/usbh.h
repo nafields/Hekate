@@ -66,55 +66,50 @@
 #define XHCI_EP_BULK_IN          6
 #define XHCI_EP_INTR_IN          7
 
-/* Device Context Indices. */
+/* Device Context Index of the default control endpoint. */
 #define XHCI_DCI_EP0             1
-#define XHCI_DCI_EP1_OUT         2
-#define XHCI_DCI_EP1_IN          3
 
 /* Number of TRBs per ring (last one is always a Link TRB). */
-#define USBH_TRB_RING_SZ         4  /* 3 usable + 1 link */
+#define USBH_TRB_RING_SZ         8   /* 7 usable + 1 link */
 #define USBH_EVT_RING_SZ         16
 
+/* Endpoint contexts tracked (DCI 1..15 → endpoints up to EP7 IN/OUT). */
+#define USBH_CTX_EPS             15
+
+/* Max payload of a single Normal/Data TRB (TRB length field is 17 bits;
+ * 64KB also matches the XHCI 64KB TRB-boundary recommendation). */
+#define USBH_XFER_MAX            SZ_64K
+
 /*
- * Ring buffers and contexts packed into one 1KB block placed at XUSB_RING_ADDR.
- * Every field starts on a 64-byte boundary as required by XHCI.
+ * Rings and contexts placed at XUSB_RING_ADDR (IRAM, accessed by the HC via
+ * AHB redirect).  Alignment per XHCI: DCBAA/contexts/ERST 64 bytes,
+ * rings 16 bytes (64 used throughout).  ~1.9KB total.
  */
 typedef struct {
-	/* +0x000: DCBAA — Device Context Base Address Array (slot 0 + slot 1). */
-	u64  dcbaa[8];                       /* 64 bytes */
+	/* Device Context Base Address Array (slot 0 = scratchpad). */
+	u64  dcbaa[8]                              __attribute__((aligned(64)));
 
-	/* +0x040: Device Context for slot 1. */
-	u32  dev_slot[8];                    /* Slot context, 32 bytes */
-	u32  dev_ep[4][8];                   /* EP contexts [0..3], 4×32=128 bytes */
-	u8   _pad1[32];                      /* pad to 64-byte boundary */
+	/* Device Context for the active slot: Slot + EP contexts (DCI 1..15). */
+	u32  dev_ctx[1 + USBH_CTX_EPS][8]          __attribute__((aligned(64)));
 
-	/* +0x100: Input Context (Input Ctrl + Slot + 4 EP contexts). */
-	u32  in_ctrl[8];                     /* Input Control Context, 32 bytes */
-	u32  in_slot[8];                     /* Input Slot Context, 32 bytes */
-	u32  in_ep[4][8];                    /* Input EP contexts [0..3], 4×32=128 bytes */
+	/* Input Context: Input Control + Slot + EP contexts (DCI 1..15).
+	 * EP context for DCI n lives at in_ctx[1 + n]. */
+	u32  in_ctx[2 + USBH_CTX_EPS][8]           __attribute__((aligned(64)));
 
-	/* +0x1C0: Command Ring (3 command TRBs + 1 Link TRB). */
-	u32  cmd_ring[USBH_TRB_RING_SZ][4]; /* 64 bytes */
+	/* Command Ring. */
+	u32  cmd_ring[USBH_TRB_RING_SZ][4]         __attribute__((aligned(64)));
 
-	/* +0x200: Event Ring Segment Table (1 entry = 16 bytes, padded to 64). */
-	u32  erst_lo;                        /* Segment base address low */
-	u32  erst_hi;                        /* Segment base address high */
-	u32  erst_size;                      /* Number of TRBs in segment */
-	u32  erst_rsvd;
-	u8   _pad2[48];
+	/* Event Ring Segment Table (1 entry). */
+	u32  erst[4]                               __attribute__((aligned(64)));
 
-	/* +0x240: Event Ring. */
-	u32  evt_ring[USBH_EVT_RING_SZ][4]; /* 16×16=256 bytes */
+	/* Event Ring. */
+	u32  evt_ring[USBH_EVT_RING_SZ][4]         __attribute__((aligned(64)));
 
-	/* +0x340: EP0 Transfer Ring (Setup+Data+Status + Link). */
-	u32  ep0_ring[USBH_TRB_RING_SZ][4]; /* 64 bytes */
-
-	/* +0x380: EP1-OUT Transfer Ring. */
-	u32  ep1out_ring[USBH_TRB_RING_SZ][4];
-
-	/* +0x3C0: EP1-IN Transfer Ring. */
-	u32  ep1in_ring[USBH_TRB_RING_SZ][4];
-} usbh_rings_t; /* 1024 bytes total */
+	/* Transfer rings: EP0 control, bulk OUT, bulk IN. */
+	u32  ep0_ring[USBH_TRB_RING_SZ][4]         __attribute__((aligned(64)));
+	u32  bulk_out_ring[USBH_TRB_RING_SZ][4]    __attribute__((aligned(64)));
+	u32  bulk_in_ring[USBH_TRB_RING_SZ][4]     __attribute__((aligned(64)));
+} usbh_rings_t;
 
 /* USBH driver context. */
 typedef struct {
@@ -126,17 +121,23 @@ typedef struct {
 
 	u8   slot_id;
 	u8   port_speed;   /* XHCI_SPEED_* */
-	u16  max_packet;   /* 64 (FS) or 512 (HS) for bulk EPs */
+	u8   cfg_val;      /* bConfigurationValue from config descriptor */
+
+	/* Bulk endpoint info parsed from the config descriptor. */
+	u8   dci_out;      /* DCI of bulk OUT endpoint */
+	u8   dci_in;       /* DCI of bulk IN endpoint */
+	u16  out_mps;      /* wMaxPacketSize of bulk OUT */
+	u16  in_mps;       /* wMaxPacketSize of bulk IN */
 
 	/* Transfer ring state (enqueue index + producer cycle state). */
 	u32  cmd_idx;
 	u8   cmd_pcs;
 	u32  ep0_idx;
 	u8   ep0_pcs;
-	u32  ep1out_idx;
-	u8   ep1out_pcs;
-	u32  ep1in_idx;
-	u8   ep1in_pcs;
+	u32  out_idx;
+	u8   out_pcs;
+	u32  in_idx;
+	u8   in_pcs;
 
 	/* Event ring state (dequeue index + consumer cycle state). */
 	u32  evt_idx;

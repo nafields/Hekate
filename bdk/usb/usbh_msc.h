@@ -21,6 +21,7 @@ typedef struct {
 usbh_msc_t *usbh_msc_get(void);
 int  usbh_msc_init(void);
 int  usbh_msc_read(u32 sector, u32 count, void *buf);
+int  usbh_msc_write(u32 sector, u32 count, void *buf);
 u32  usbh_msc_get_sector_count(void);
 
 #endif /* _USBH_MSC_H_ */

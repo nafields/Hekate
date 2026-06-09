@@ -121,6 +121,10 @@
 #define USBH_BULK_IN_BUF_ADDR     0xFF100000
 #define USBH_BULK_OUT_BUF_ADDR    0xFF200000
 #define  USBH_BULK_BUF_SZ              SZ_1M
+#define USBH_FW_BUF_ADDR          0xFF300000 // XUSB Falcon firmware (must stay resident).
+#define  USBH_FW_BUF_SZ              SZ_256K
+#define USBH_SCRATCHPAD_ADDR      0xFF340000 // XHCI scratchpad array + pages.
+#define  USBH_SCRATCHPAD_SZ          SZ_256K
 
 // #define EXT_PAYLOAD_ADDR    0xC0000000
 // #define RCM_PAYLOAD_ADDR    (EXT_PAYLOAD_ADDR + ALIGN(PATCHED_RELOC_SZ, 0x10))

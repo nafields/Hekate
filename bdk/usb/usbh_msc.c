@@ -12,6 +12,7 @@
 
 #include <usb/usbh.h>
 #include <usb/usbh_msc.h>
+#include <usb/usbd.h>   /* USB_RES_* / USB_ERROR_* result codes. */
 
 #include <gfx_utils.h>
 #include <soc/timer.h>
@@ -26,11 +27,15 @@
 #define CSW_STAT_FAIL  1
 #define CSW_STAT_PHASE 2
 
-/* SCSI opcodes needed for host-side read-only MSC. */
+/* SCSI opcodes needed for host-side MSC. */
 #define SC_TEST_UNIT_READY  0x00
 #define SC_INQUIRY          0x12
 #define SC_READ_CAPACITY10  0x25
 #define SC_READ10           0x28
+#define SC_WRITE10          0x2A
+
+/* Sectors per BOT command — bounded by the 64KB single-TRB transfer limit. */
+#define MSC_CHUNK_SECTORS   (USBH_XFER_MAX / 512)
 
 /* CBW: Command Block Wrapper (31 bytes). */
 typedef struct {
@@ -184,21 +189,20 @@ int usbh_msc_init(void)
 	return USB_RES_OK;
 }
 
-/* READ(10): read count 512-byte sectors starting at sector. */
-int usbh_msc_read(u32 sector, u32 count, void *buf)
+/* READ(10)/WRITE(10): transfer count 512-byte sectors starting at sector. */
+static int _msc_rw(u32 sector, u32 count, void *buf, int write)
 {
 	if (!usbh_msc_dev.ready)
 		return USB_ERROR_INIT;
 
-	/* Process in chunks that fit in USBH_BULK_BUF_SZ (1MB = 2048 sectors). */
-	u8 *dst = (u8 *)buf;
+	u8 *ptr = (u8 *)buf;
 	while (count) {
 		u32 chunk = count;
-		if (chunk > (USBH_BULK_BUF_SZ / 512))
-			chunk = USBH_BULK_BUF_SZ / 512;
+		if (chunk > MSC_CHUNK_SECTORS)
+			chunk = MSC_CHUNK_SECTORS;
 
 		u8 cdb[10];
-		cdb[0] = SC_READ10;
+		cdb[0] = write ? SC_WRITE10 : SC_READ10;
 		cdb[1] = 0;
 		cdb[2] = (sector >> 24) & 0xFF;
 		cdb[3] = (sector >> 16) & 0xFF;
@@ -209,15 +213,25 @@ int usbh_msc_read(u32 sector, u32 count, void *buf)
 		cdb[8] =  chunk       & 0xFF;
 		cdb[9] = 0;
 
-		int res = _bot_transfer(cdb, 10, dst, chunk * 512, 1);
+		int res = _bot_transfer(cdb, 10, ptr, chunk * 512, write ? 0 : 1);
 		if (res)
 			return res;
 
 		sector += chunk;
 		count  -= chunk;
-		dst    += chunk * 512;
+		ptr    += chunk * 512;
 	}
 	return USB_RES_OK;
+}
+
+int usbh_msc_read(u32 sector, u32 count, void *buf)
+{
+	return _msc_rw(sector, count, buf, 0);
+}
+
+int usbh_msc_write(u32 sector, u32 count, void *buf)
+{
+	return _msc_rw(sector, count, buf, 1);
 }
 
 u32 usbh_msc_get_sector_count(void)

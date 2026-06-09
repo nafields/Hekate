@@ -21,5 +21,6 @@ typedef struct {
 usb_blkdev_t *usb_blkdev_get(void);
 int usb_blkdev_init(usb_blkdev_t *dev);
 int usb_blkdev_read(usb_blkdev_t *dev, u32 sector, u32 count, void *buf);
+int usb_blkdev_write(usb_blkdev_t *dev, u32 sector, u32 count, void *buf);
 
 #endif /* _USB_BLKDEV_H_ */
