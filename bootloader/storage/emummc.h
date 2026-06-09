@@ -44,6 +44,9 @@ typedef struct _emummc_cfg_t
 	u32 file_based_part_size;
 	u32 active_part;
 	int fs_ver;
+	// USB emuMMC.
+	int   usb_enabled;  /* Use USB SSD as emuMMC backend. */
+	u64   usb_sector;   /* LBA start of emuMMC on USB drive (hex in INI). */
 } emummc_cfg_t;
 
 extern emummc_cfg_t emu_cfg;

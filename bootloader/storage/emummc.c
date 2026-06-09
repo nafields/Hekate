@@ -20,6 +20,7 @@
 #include <bdk.h>
 
 #include "emummc.h"
+#include "usb_blkdev.h"
 #include "../config.h"
 #include <libs/fatfs/ff.h>
 
@@ -35,6 +36,8 @@ void emummc_load_cfg()
 	emu_cfg.file_based_part_size = 0;
 	emu_cfg.active_part = 0;
 	emu_cfg.fs_ver = 0;
+	emu_cfg.usb_enabled = 0;
+	emu_cfg.usb_sector = 0;
 	if (!emu_cfg.nintendo_path)
 		emu_cfg.nintendo_path = (char *)malloc(0x200);
 	if (!emu_cfg.emummc_file_based_path)
@@ -65,6 +68,10 @@ void emummc_load_cfg()
 						emu_cfg.path   = kv->val;
 					else if (!strcmp("nintendo_path", kv->key))
 						strcpy(emu_cfg.nintendo_path, kv->val);
+					else if (!strcmp("usb_enabled",   kv->key))
+						emu_cfg.usb_enabled = atoi(kv->val);
+					else if (!strcmp("usb_sector",    kv->key))
+						emu_cfg.usb_sector  = strtol(kv->val, NULL, 16);
 				}
 				break;
 			}
@@ -144,6 +151,12 @@ int emummc_storage_init_mmc()
 	if (!emu_cfg.enabled || h_cfg.emummc_force_disable)
 		return 0;
 
+	if (emu_cfg.usb_enabled) {
+		usb_blkdev_t *udev = usb_blkdev_get();
+		udev->sector_start = (u32)emu_cfg.usb_sector;
+		return usb_blkdev_init(udev);
+	}
+
 	if (!sd_mount())
 		goto out;
 
@@ -189,6 +202,8 @@ int emummc_storage_read(u32 sector, u32 num_sectors, void *buf)
 	FIL fp;
 	if (!emu_cfg.enabled || h_cfg.emummc_force_disable)
 		return sdmmc_storage_read(&emmc_storage, sector, num_sectors, buf);
+	else if (emu_cfg.usb_enabled) // usb_blkdev returns 0 on success; callers expect 1.
+		return usb_blkdev_read(usb_blkdev_get(), sector, num_sectors, buf) ? 0 : 1;
 	else if (emu_cfg.sector)
 	{
 		sector += emu_cfg.sector;
@@ -234,6 +249,8 @@ int emummc_storage_write(u32 sector, u32 num_sectors, void *buf)
 	FIL fp;
 	if (!emu_cfg.enabled || h_cfg.emummc_force_disable)
 		return sdmmc_storage_write(&emmc_storage, sector, num_sectors, buf);
+	else if (emu_cfg.usb_enabled) // Must come before SD branches: USB offsets are not SD offsets.
+		return usb_blkdev_write(usb_blkdev_get(), sector, num_sectors, buf) ? 0 : 1;
 	else if (emu_cfg.sector)
 	{
 		sector += emu_cfg.sector;
