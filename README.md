@@ -136,6 +136,8 @@ usb_atmosphere=0
 
 `emupath=` boot entries work too: a folder with a `usb_based` file (a 4-byte little endian start sector, like `raw_based`) marks a USB emuMMC.
 
+Creating one from Nyx: `emuMMC` -> `Create emuMMC` -> `USB Drive`, then choose `sysMMC` (copy the internal eMMC) or `emuMMC` (copy the active SD Raw Partition emuMMC). Nyx waits for the drive, places the image in the free space after the drive's last MBR partition (claiming it as a type `0xE0` entry so other systems leave it alone), copies BOOT0/BOOT1/GPP with progress, writes `emuMMC/USBxx/usb_based` and `emummc.ini` on the SD card, and selects it. Existing USB emuMMCs show up in `Change emuMMC`. The drive must use MBR (not GPT) and have a free entry.
+
 What Atmosphere receives in the exosphere emummc config: `base_cfg.type = 3`, `partition_cfg.start_sector = sector` (LBA on the USB drive, 512-byte sectors), `base_cfg.id`, `nintendo_path`. The drive is the first USB mass storage device reachable from the console (OTG adapter or dock hub).
 
 Nyx shows a USB emuMMC as such but cannot create, resize or share one over UMS yet.

@@ -185,10 +185,12 @@ int emummc_storage_init_mmc()
 			EPRINTF("Failed to init USB emuMMC drive.");
 			goto out;
 		}
+		// The GPP may be smaller than the eMMC (resized source); only require
+		// BOOT0/BOOT1 and the start of GPP to be on the drive.
 		u32 usb_sectors = usb_storage_msc()->num_sectors;
-		if (emu_cfg.sector + 2 * 0x2000 + emmc_storage.sec_cnt > usb_sectors)
+		if (emu_cfg.sector + 2 * 0x2000 >= usb_sectors)
 		{
-			EPRINTF("USB emuMMC exceeds drive size.");
+			EPRINTF("USB emuMMC is outside the drive.");
 			goto out;
 		}
 		return 0;

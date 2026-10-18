@@ -33,6 +33,9 @@ typedef struct _mbr_ctxt_t
 
 	int part_idx;
 	u32 sector_start;
+
+	bool usb;             // Create the emuMMC on a USB drive.
+	bool usb_from_emummc; // Source is the active SD emuMMC instead of sysMMC.
 } mbr_ctxt_t;
 
 static bool emummc_backup;
@@ -56,7 +59,9 @@ static void _create_window_emummc()
 	emmc_tool_gui_t emmc_tool_gui_ctxt;
 
 	lv_obj_t *win;
-	if (!mbr_ctx.part_idx)
+	if (mbr_ctx.usb)
+		win = nyx_create_window_custom_close_btn(SYMBOL_DRIVE"  Create USB Drive emuMMC", _action_emummc_window_close);
+	else if (!mbr_ctx.part_idx)
 		win = nyx_create_window_custom_close_btn(SYMBOL_DRIVE"  Create SD File emuMMC", _action_emummc_window_close);
 	else
 		win = nyx_create_window_custom_close_btn(SYMBOL_DRIVE"  Create SD Partition emuMMC", _action_emummc_window_close);
@@ -131,7 +136,9 @@ static void _create_window_emummc()
 	lv_obj_align(label_finish, bar, LV_ALIGN_OUT_BOTTOM_LEFT, 0, LV_DPI * 9 / 20);
 	emmc_tool_gui_ctxt.label_finish = label_finish;
 
-	if (!mbr_ctx.part_idx)
+	if (mbr_ctx.usb)
+		dump_emummc_usb(&emmc_tool_gui_ctxt, mbr_ctx.usb_from_emummc);
+	else if (!mbr_ctx.part_idx)
 		dump_emummc_file(&emmc_tool_gui_ctxt);
 	else
 		dump_emummc_raw(&emmc_tool_gui_ctxt, mbr_ctx.part_idx, mbr_ctx.sector_start, mbr_ctx.resized_cnt[mbr_ctx.part_idx - 1]);
@@ -309,6 +316,56 @@ static void _create_mbox_emummc_raw()
 	lv_obj_set_top(mbox, true);
 }
 
+static lv_res_t _create_emummc_usb_action(lv_obj_t * btns, const char * txt)
+{
+	int btn_idx = lv_btnm_get_pressed(btns);
+	lv_obj_t *bg = lv_obj_get_parent(lv_obj_get_parent(btns));
+
+	if (btn_idx < 2)
+	{
+		memset(&mbr_ctx, 0, sizeof(mbr_ctxt_t));
+		mbr_ctx.usb = true;
+		mbr_ctx.usb_from_emummc = (btn_idx == 1);
+
+		lv_obj_set_style(bg, &lv_style_transp);
+		_create_window_emummc();
+
+		mbr_ctx.usb = false;
+		mbr_ctx.usb_from_emummc = false;
+	}
+
+	mbox_action(btns, txt);
+
+	return LV_RES_INV;
+}
+
+static void _create_mbox_emummc_usb()
+{
+	lv_obj_t *dark_bg = lv_obj_create(lv_scr_act(), NULL);
+	lv_obj_set_style(dark_bg, &mbox_darken);
+	lv_obj_set_size(dark_bg, LV_HOR_RES, LV_VER_RES);
+
+	static const char *mbox_btn_map[] = { "\222sysMMC", "\222emuMMC", "\222Cancel", "" };
+	lv_obj_t * mbox = lv_mbox_create(dark_bg, NULL);
+	lv_mbox_set_recolor_text(mbox, true);
+	lv_obj_set_width(mbox, LV_HOR_RES / 9 * 6);
+
+	lv_mbox_set_text(mbox,
+		"#C7EA46 emuMMC on a USB drive#\n\n"
+		"The image is written as a raw partition in the free space after\n"
+		"the last partition of the drive (OTG adapter or dock). Needs\n"
+		"#FF8000 libsys_usbh.bso# and #FF8000 xusbfw.bin# in bootloader/sys.\n\n"
+		"Choose what to copy:\n"
+		"#FF8000 sysMMC# copies the internal eMMC.\n"
+		"#FF8000 emuMMC# copies the active SD Raw Partition emuMMC.\n\n"
+		"#FFDD00 Booting it needs Atmosphere with a USB emuMMC backend.#");
+
+	lv_mbox_add_btns(mbox, mbox_btn_map, _create_emummc_usb_action);
+
+	lv_obj_align(mbox, NULL, LV_ALIGN_CENTER, 0, 0);
+	lv_obj_set_top(mbox, true);
+}
+
 static lv_res_t _create_emummc_action(lv_obj_t * btns, const char * txt)
 {
 	int btn_idx = lv_btnm_get_pressed(btns);
@@ -326,6 +383,9 @@ static lv_res_t _create_emummc_action(lv_obj_t * btns, const char * txt)
 	case 1:
 		_create_mbox_emummc_raw();
 		break;
+	case 2:
+		_create_mbox_emummc_usb();
+		break;
 	}
 
 	mbox_action(btns, txt);
@@ -342,7 +402,7 @@ static lv_res_t _create_mbox_emummc_create(lv_obj_t *btn)
 	lv_obj_set_style(dark_bg, &mbox_darken);
 	lv_obj_set_size(dark_bg, LV_HOR_RES, LV_VER_RES);
 
-	static const char * mbox_btn_map[] = { "\222SD File", "\222SD Partition", "\222Cancel", "" };
+	static const char * mbox_btn_map[] = { "\222SD File", "\222SD Partition", "\222USB Drive", "\222Cancel", "" };
 	lv_obj_t * mbox = lv_mbox_create(dark_bg, NULL);
 	lv_mbox_set_recolor_text(mbox, true);
 	lv_obj_set_width(mbox, LV_HOR_RES / 9 * 6);
@@ -351,7 +411,8 @@ static lv_res_t _create_mbox_emummc_create(lv_obj_t *btn)
 		"Welcome to #C7EA46 emuMMC# creation tool!\n\n"
 		"Please choose what type of emuMMC you want to create.\n"
 		"#FF8000 SD File# is saved as files in the FAT partition.\n"
-		"#FF8000 SD Partition# is saved as raw image in an available partition.");
+		"#FF8000 SD Partition# is saved as raw image in an available partition.\n"
+		"#FF8000 USB Drive# copies sysMMC or the active emuMMC to a USB drive.");
 
 	lv_mbox_add_btns(mbox, mbox_btn_map, _create_emummc_action);
 
@@ -966,7 +1027,26 @@ static lv_res_t _save_disable_emummc_cfg_action(lv_obj_t * btn)
 
 static lv_res_t _save_file_emummc_cfg_action(lv_obj_t *btn)
 {
-	save_emummc_cfg(0, 0, lv_list_get_btn_text(btn));
+	const char *path = lv_list_get_btn_text(btn);
+
+	// A usb_based marker makes this a USB drive emuMMC (sector on the drive).
+	char *marker = malloc(256);
+	s_printf(marker, "%s/usb_based", path);
+
+	FIL fp;
+	u32 usb_sector = 0;
+	sd_mount();
+	if (!f_open(&fp, marker, FA_READ))
+	{
+		f_read(&fp, &usb_sector, 4, NULL);
+		f_close(&fp);
+	}
+	free(marker);
+
+	if (usb_sector)
+		save_emummc_cfg_usb(usb_sector, path);
+	else
+		save_emummc_cfg(0, 0, path);
 	_create_emummc_saved_mbox();
 	sd_unmount();
 
@@ -1048,12 +1128,18 @@ static lv_res_t _create_change_emummc_window(lv_obj_t *btn_caller)
 	emummc_idx = 0;
 	u32 file_based_idx = 0;
 
-	// Sanitize the directory list with sd file based ones.
+	// Sanitize the directory list with sd file based and usb based ones.
 	while (emummc_img->dirlist->name[emummc_idx])
 	{
 		s_printf(path, "emuMMC/%s/file_based", emummc_img->dirlist->name[emummc_idx]);
+		bool listed = !f_stat(path, NULL);
+		if (!listed)
+		{
+			s_printf(path, "emuMMC/%s/usb_based", emummc_img->dirlist->name[emummc_idx]);
+			listed = !f_stat(path, NULL);
+		}
 
-		if (!f_stat(path, NULL))
+		if (listed)
 		{
 			char *tmp = emummc_img->dirlist->name[emummc_idx];
 			memcpy(emummc_img->dirlist->name[file_based_idx], tmp, strlen(tmp) + 1);
@@ -1158,7 +1244,7 @@ out0:;
 	lv_label_set_static_text(label_sep, "");
 
 	lv_obj_t *label_txt3 = lv_label_create(h2, NULL);
-	lv_label_set_static_text(label_txt3, "SD File Based");
+	lv_label_set_static_text(label_txt3, "SD File / USB Drive Based");
 	lv_obj_set_style(label_txt3, lv_theme_get_current()->label.prim);
 	lv_obj_align(label_txt3, label_sep, LV_ALIGN_OUT_BOTTOM_LEFT, LV_DPI / 4, -LV_DPI / 7);
 
@@ -1322,8 +1408,9 @@ lv_res_t create_win_emummc_tools(lv_obj_t *btn)
 	lv_obj_t *label_txt4 = lv_label_create(h2, NULL);
 	lv_label_set_recolor(label_txt4, true);
 	lv_label_set_static_text(label_txt4,
-		"Allows you to create a new #C7EA46 SD File# or #C7EA46 SD Raw Partition#\n"
-		"emuMMC. You can create it from eMMC or a eMMC Backup.");
+		"Allows you to create a new #C7EA46 SD File#, #C7EA46 SD Raw Partition#\n"
+		"or #C7EA46 USB Drive# emuMMC from eMMC, a eMMC Backup or the\n"
+		"active emuMMC.");
 
 	lv_obj_set_style(label_txt4, &hint_small_style);
 	lv_obj_align(label_txt4, btn3, LV_ALIGN_OUT_BOTTOM_LEFT, 0, LV_DPI / 3);

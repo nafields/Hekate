@@ -32,8 +32,11 @@ typedef struct _emummc_cfg_t
 
 void load_emummc_cfg(emummc_cfg_t *emu_info);
 void save_emummc_cfg(u32 part_idx, u32 sector_start, const char *path);
+void save_emummc_cfg_usb(u32 sector_start, const char *path);
 void dump_emummc_file(emmc_tool_gui_t *gui);
 void dump_emummc_raw(emmc_tool_gui_t *gui, int part_idx, u32 sector_start, u32 resized_count);
+/* Copy sysMMC (from_emummc = false) or the active SD raw partition emuMMC to a USB drive. */
+void dump_emummc_usb(emmc_tool_gui_t *gui, bool from_emummc);
 void update_emummc_base_folder(char *outFilename, u32 sdPathLen, u32 currPartIdx);
 
 #endif
