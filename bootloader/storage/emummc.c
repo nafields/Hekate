@@ -48,6 +48,8 @@ void emummc_load_cfg()
 	emu_cfg.file_based_part_size = 0;
 	emu_cfg.active_part = 0;
 	emu_cfg.fs_ver = 0;
+	emu_cfg.usb = 0;
+	emu_cfg.usb_atmosphere = 0;
 	if (!emu_cfg.nintendo_path)
 		emu_cfg.nintendo_path = (char *)malloc(0x200);
 	if (!emu_cfg.emummc_file_based_path)
@@ -79,6 +81,10 @@ void emummc_load_cfg()
 						emu_cfg.path   = kv->val;
 					else if (!strcmp("nintendo_path", kv->key))
 						strcpy(emu_cfg.nintendo_path, kv->val);
+					else if (!strcmp("usb_enabled",    kv->key))
+						emu_cfg.usb = atoi(kv->val);
+					else if (!strcmp("usb_atmosphere", kv->key))
+						emu_cfg.usb_atmosphere = atoi(kv->val);
 				}
 				break;
 			}
@@ -91,14 +97,27 @@ bool emummc_set_path(char *path)
 	FIL fp;
 	bool found = false;
 
+	emu_cfg.usb = 0;
+
+	// raw_based: raw SD partition. usb_based: raw image on the USB drive.
+	// Both markers hold the start sector.
 	_emummc_sd_path(emu_cfg.emummc_file_based_path, path);
 	strcat(emu_cfg.emummc_file_based_path, "/raw_based");
+	bool raw = !f_open(&fp, emu_cfg.emummc_file_based_path, FA_READ);
+	if (!raw)
+	{
+		_emummc_sd_path(emu_cfg.emummc_file_based_path, path);
+		strcat(emu_cfg.emummc_file_based_path, "/usb_based");
+		raw = !f_open(&fp, emu_cfg.emummc_file_based_path, FA_READ);
+		emu_cfg.usb = raw;
+	}
 
-	if (!f_open(&fp, emu_cfg.emummc_file_based_path, FA_READ))
+	if (raw)
 	{
 		if (!f_read(&fp, &emu_cfg.sector, 4, NULL))
 			if (emu_cfg.sector)
 				found = true;
+		f_close(&fp);
 	}
 	else
 	{
@@ -158,6 +177,23 @@ int emummc_storage_init_mmc()
 	if (!emu_cfg.enabled || h_cfg.emummc_force_disable)
 		return 0;
 
+	if (emu_cfg.usb)
+	{
+		// Raw image on the USB drive. BOOT0 + BOOT1 + GPP must fit on it.
+		if (!emu_cfg.sector || !usb_storage_init(3000))
+		{
+			EPRINTF("Failed to init USB emuMMC drive.");
+			goto out;
+		}
+		u32 usb_sectors = usb_storage_msc()->num_sectors;
+		if (emu_cfg.sector + 2 * 0x2000 + emmc_storage.sec_cnt > usb_sectors)
+		{
+			EPRINTF("USB emuMMC exceeds drive size.");
+			goto out;
+		}
+		return 0;
+	}
+
 	if (!sd_mount())
 		goto out;
 
@@ -207,6 +243,8 @@ int emummc_storage_read(u32 sector, u32 num_sectors, void *buf)
 	{
 		sector += emu_cfg.sector;
 		sector += emummc_raw_get_part_off(emu_cfg.active_part) * 0x2000;
+		if (emu_cfg.usb) // usb_storage returns 0 on success.
+			return !usb_storage_read(sector, num_sectors, buf);
 		return sdmmc_storage_read(&sd_storage, sector, num_sectors, buf);
 	}
 	else
@@ -252,6 +290,8 @@ int emummc_storage_write(u32 sector, u32 num_sectors, void *buf)
 	{
 		sector += emu_cfg.sector;
 		sector += emummc_raw_get_part_off(emu_cfg.active_part) * 0x2000;
+		if (emu_cfg.usb) // usb_storage returns 0 on success.
+			return !usb_storage_write(sector, num_sectors, buf);
 		return sdmmc_storage_write(&sd_storage, sector, num_sectors, buf);
 	}
 	else

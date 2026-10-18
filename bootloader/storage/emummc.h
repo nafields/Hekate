@@ -24,6 +24,7 @@ typedef enum
 	EMUMMC_TYPE_NONE      = 0,
 	EMUMMC_TYPE_PARTITION = 1,
 	EMUMMC_TYPE_FILES     = 2,
+	EMUMMC_TYPE_USB       = 3, // Raw image on a USB mass storage drive (same layout as a partition).
 } emummc_type_t;
 
 typedef enum {
@@ -44,6 +45,9 @@ typedef struct _emummc_cfg_t
 	u32 file_based_part_size;
 	u32 active_part;
 	int fs_ver;
+	// USB emuMMC: raw image at `sector` on the USB drive instead of the SD card.
+	int usb;            // emummc.ini: usb_enabled=1, or a `usb_based` marker in the emuMMC folder.
+	int usb_atmosphere; // emummc.ini: usb_atmosphere=1. The installed Atmosphere has a USB emuMMC backend.
 } emummc_cfg_t;
 
 extern emummc_cfg_t emu_cfg;

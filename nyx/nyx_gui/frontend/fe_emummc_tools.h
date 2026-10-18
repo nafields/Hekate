@@ -23,6 +23,7 @@
 typedef struct _emummc_cfg_t
 {
 	int  enabled;
+	int  usb;     // Raw image on a USB drive (hekate usb_enabled=1).
 	u32  sector;
 	u16  id;
 	char *path;

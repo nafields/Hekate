@@ -107,6 +107,39 @@ Notes:
 - Nyx is launched from the drive but still runs from the SD card, so keep a complete `bootloader` folder on the SD card as well.
 - Drives are accessed in USB 2.0 High Speed. USB 3.0 drives work at USB 2.0 speed.
 
+### emuMMC on a USB drive
+
+An emuMMC can also be a raw image on the USB drive. hekate reads it for its own needs (package1, keyblobs) and passes it to Atmosphere as emuMMC type `3` with the start sector, the same way a raw SD partition emuMMC is passed as type `1`.
+
+> **Atmosphere's stock `emummc` module only has an SD card driver.** Booting a USB emuMMC requires an Atmosphere build whose emummc module implements a USB mass storage backend. Until then hekate refuses to launch HOS with a USB emuMMC. Once such a build is installed, add `usb_atmosphere=1` to `emummc.ini` to allow the launch.
+
+Layout on the drive (identical to a raw SD partition emuMMC, so an existing one can be copied sector by sector):
+
+| Offset from `sector` | Content                          |
+| -------------------- | -------------------------------- |
+| `0x0`                | BOOT0 (0x2000 sectors, 4 MiB)    |
+| `0x2000`             | BOOT1 (0x2000 sectors, 4 MiB)    |
+| `0x4000`             | GPP (raw eMMC user partition)    |
+
+The image must not overlap the drive's FAT partition. Configuration in `emuMMC/emummc.ini` **on the SD card**:
+
+```
+[emummc]
+enabled=1
+usb_enabled=1
+sector=0x1A00000
+path=emuMMC/USB0
+nintendo_path=emuMMC/USB0/Nintendo
+id=0x0
+usb_atmosphere=0
+```
+
+`emupath=` boot entries work too: a folder with a `usb_based` file (a 4-byte little endian start sector, like `raw_based`) marks a USB emuMMC.
+
+What Atmosphere receives in the exosphere emummc config: `base_cfg.type = 3`, `partition_cfg.start_sector = sector` (LBA on the USB drive, 512-byte sectors), `base_cfg.id`, `nintendo_path`. The drive is the first USB mass storage device reachable from the console (OTG adapter or dock hub).
+
+Nyx shows a USB emuMMC as such but cannot create, resize or share one over UMS yet.
+
 ### Boot entry key/value combinations:
 
 | Config option          | Description                                                |

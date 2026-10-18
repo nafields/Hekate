@@ -32,6 +32,7 @@ enum emuMMC_Type
 	emuMMC_None = 0,
 	emuMMC_Partition,
 	emuMMC_File,
+	emuMMC_USB, // Raw image at start_sector on a USB mass storage drive. Needs Atmosphere with a USB emuMMC backend.
 	emuMMC_MAX
 };
 
@@ -319,7 +320,10 @@ void config_exosphere(launch_ctxt_t *ctxt, u32 warmboot_base)
 	if (emu_cfg.enabled && !h_cfg.emummc_force_disable)
 	{
 		exo_cfg->emummc_cfg.base_cfg.magic = EMUMMC_MAGIC;
-		exo_cfg->emummc_cfg.base_cfg.type = emu_cfg.sector ? emuMMC_Partition : emuMMC_File;
+		if (emu_cfg.usb)
+			exo_cfg->emummc_cfg.base_cfg.type = emuMMC_USB;
+		else
+			exo_cfg->emummc_cfg.base_cfg.type = emu_cfg.sector ? emuMMC_Partition : emuMMC_File;
 		exo_cfg->emummc_cfg.base_cfg.fs_ver = emu_cfg.fs_ver;
 		exo_cfg->emummc_cfg.base_cfg.id = emu_cfg.id;
 

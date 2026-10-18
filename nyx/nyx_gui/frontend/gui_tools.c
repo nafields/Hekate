@@ -341,6 +341,9 @@ static lv_res_t _create_mbox_ums_error(int error)
 	case 3:
 		lv_mbox_set_text(mbox, "#FF8000 USB Mass Storage#\n\n#FFFF00 Active emuMMC is not partition based!#");
 		break;
+	case 4:
+		lv_mbox_set_text(mbox, "#FF8000 USB Mass Storage#\n\n#FFFF00 Active emuMMC is on a USB drive!#");
+		break;
 	}
 
 	lv_mbox_add_btns(mbox, mbox_btn_map, mbox_action);
@@ -495,8 +498,8 @@ static lv_res_t _action_ums_emuemmc_boot0(lv_obj_t *btn)
 		error = 2;
 		if (emu_info.enabled)
 		{
-			error = 3;
-			if (emu_info.sector)
+			error = emu_info.usb ? 4 : 3; // A USB emuMMC is not on the SD card.
+			if (emu_info.sector && !emu_info.usb)
 			{
 				error = 0;
 				usbs.offset = emu_info.sector;
@@ -542,8 +545,8 @@ static lv_res_t _action_ums_emuemmc_boot1(lv_obj_t *btn)
 		error = 2;
 		if (emu_info.enabled)
 		{
-			error = 3;
-			if (emu_info.sector)
+			error = emu_info.usb ? 4 : 3; // A USB emuMMC is not on the SD card.
+			if (emu_info.sector && !emu_info.usb)
 			{
 				error = 0;
 				usbs.offset = emu_info.sector + 0x2000;

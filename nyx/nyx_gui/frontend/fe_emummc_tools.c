@@ -53,6 +53,8 @@ void load_emummc_cfg(emummc_cfg_t *emu_info)
 			{
 				if (!strcmp("enabled",     kv->key))
 					emu_info->enabled = atoi(kv->val);
+				else if (!strcmp("usb_enabled", kv->key))
+					emu_info->usb = atoi(kv->val);
 				else if (!strcmp("sector", kv->key))
 					emu_info->sector = strtol(kv->val, NULL, 16);
 				else if (!strcmp("id",     kv->key))

@@ -1250,7 +1250,8 @@ lv_res_t create_win_emummc_tools(lv_obj_t *btn)
 	if (emu_info.enabled)
 	{
 		if (emu_info.sector)
-			s_printf(txt_buf, "#00DDFF Type:# SD Raw Partition\n#00DDFF Sector:# 0x%08X\n#00DDFF Nintendo folder:# %s",
+			s_printf(txt_buf, "#00DDFF Type:# %s\n#00DDFF Sector:# 0x%08X\n#00DDFF Nintendo folder:# %s",
+				emu_info.usb ? "USB Raw Image" : "SD Raw Partition",
 				emu_info.sector, emu_info.nintendo_path ? emu_info.nintendo_path : "");
 		else
 			s_printf(txt_buf, "#00DDFF Type:# SD File\n#00DDFF Base folder:# %s\n#00DDFF Nintendo folder:# %s",
