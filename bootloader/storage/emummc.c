@@ -20,12 +20,24 @@
 #include <bdk.h>
 
 #include "emummc.h"
-#include "usb_blkdev.h"
+#include "usb_storage.h"
 #include "../config.h"
 #include <libs/fatfs/ff.h>
 
 extern hekate_config h_cfg;
 emummc_cfg_t emu_cfg = { 0 };
+
+/*
+ * emuMMC always lives on the SD card, since that is where Atmosphere reads
+ * it from. While a USB drive is the main storage (volume 0), SD card files
+ * are reached through volume 1.
+ */
+static char *_emummc_sd_path(char *dst, const char *path)
+{
+	strcpy(dst, usb_storage_sd_volume());
+	strcat(dst, path);
+	return dst;
+}
 
 void emummc_load_cfg()
 {
@@ -36,8 +48,6 @@ void emummc_load_cfg()
 	emu_cfg.file_based_part_size = 0;
 	emu_cfg.active_part = 0;
 	emu_cfg.fs_ver = 0;
-	emu_cfg.usb_enabled = 0;
-	emu_cfg.usb_sector = 0;
 	if (!emu_cfg.nintendo_path)
 		emu_cfg.nintendo_path = (char *)malloc(0x200);
 	if (!emu_cfg.emummc_file_based_path)
@@ -46,8 +56,9 @@ void emummc_load_cfg()
 	emu_cfg.nintendo_path[0] = 0;
 	emu_cfg.emummc_file_based_path[0] = 0;
 
+	char ini_path[32];
 	LIST_INIT(ini_sections);
-	if (ini_parse(&ini_sections, "emuMMC/emummc.ini", false))
+	if (ini_parse(&ini_sections, _emummc_sd_path(ini_path, "emuMMC/emummc.ini"), false))
 	{
 		LIST_FOREACH_ENTRY(ini_sec_t, ini_sec, &ini_sections, link)
 		{
@@ -68,10 +79,6 @@ void emummc_load_cfg()
 						emu_cfg.path   = kv->val;
 					else if (!strcmp("nintendo_path", kv->key))
 						strcpy(emu_cfg.nintendo_path, kv->val);
-					else if (!strcmp("usb_enabled",   kv->key))
-						emu_cfg.usb_enabled = atoi(kv->val);
-					else if (!strcmp("usb_sector",    kv->key))
-						emu_cfg.usb_sector  = strtol(kv->val, NULL, 16);
 				}
 				break;
 			}
@@ -84,7 +91,7 @@ bool emummc_set_path(char *path)
 	FIL fp;
 	bool found = false;
 
-	strcpy(emu_cfg.emummc_file_based_path, path);
+	_emummc_sd_path(emu_cfg.emummc_file_based_path, path);
 	strcat(emu_cfg.emummc_file_based_path, "/raw_based");
 
 	if (!f_open(&fp, emu_cfg.emummc_file_based_path, FA_READ))
@@ -95,7 +102,7 @@ bool emummc_set_path(char *path)
 	}
 	else
 	{
-		strcpy(emu_cfg.emummc_file_based_path, path);
+		_emummc_sd_path(emu_cfg.emummc_file_based_path, path);
 		strcat(emu_cfg.emummc_file_based_path, "/file_based");
 
 		if (!f_stat(emu_cfg.emummc_file_based_path, NULL))
@@ -151,18 +158,12 @@ int emummc_storage_init_mmc()
 	if (!emu_cfg.enabled || h_cfg.emummc_force_disable)
 		return 0;
 
-	if (emu_cfg.usb_enabled) {
-		usb_blkdev_t *udev = usb_blkdev_get();
-		udev->sector_start = (u32)emu_cfg.usb_sector;
-		return usb_blkdev_init(udev);
-	}
-
 	if (!sd_mount())
 		goto out;
 
 	if (!emu_cfg.sector)
 	{
-		strcpy(emu_cfg.emummc_file_based_path, emu_cfg.path);
+		_emummc_sd_path(emu_cfg.emummc_file_based_path, emu_cfg.path);
 		strcat(emu_cfg.emummc_file_based_path, "/eMMC");
 
 		if (f_stat(emu_cfg.emummc_file_based_path, &fno))
@@ -202,8 +203,6 @@ int emummc_storage_read(u32 sector, u32 num_sectors, void *buf)
 	FIL fp;
 	if (!emu_cfg.enabled || h_cfg.emummc_force_disable)
 		return sdmmc_storage_read(&emmc_storage, sector, num_sectors, buf);
-	else if (emu_cfg.usb_enabled) // usb_blkdev returns 0 on success; callers expect 1.
-		return usb_blkdev_read(usb_blkdev_get(), sector, num_sectors, buf) ? 0 : 1;
 	else if (emu_cfg.sector)
 	{
 		sector += emu_cfg.sector;
@@ -249,8 +248,6 @@ int emummc_storage_write(u32 sector, u32 num_sectors, void *buf)
 	FIL fp;
 	if (!emu_cfg.enabled || h_cfg.emummc_force_disable)
 		return sdmmc_storage_write(&emmc_storage, sector, num_sectors, buf);
-	else if (emu_cfg.usb_enabled) // Must come before SD branches: USB offsets are not SD offsets.
-		return usb_blkdev_write(usb_blkdev_get(), sector, num_sectors, buf) ? 0 : 1;
 	else if (emu_cfg.sector)
 	{
 		sector += emu_cfg.sector;
@@ -296,7 +293,7 @@ int emummc_storage_set_mmc_partition(u32 partition)
 		return 1;
 	else
 	{
-		strcpy(emu_cfg.emummc_file_based_path, emu_cfg.path);
+		_emummc_sd_path(emu_cfg.emummc_file_based_path, emu_cfg.path);
 		strcat(emu_cfg.emummc_file_based_path, "/eMMC");
 
 		switch (partition)

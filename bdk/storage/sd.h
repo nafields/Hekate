@@ -59,6 +59,10 @@ bool sd_initialize(bool power_cycle);
 bool sd_mount();
 void sd_unmount();
 void sd_end();
+// Serve volume 0 from a USB mass storage device instead of the SD card.
+// The caller provides the block device through the FatFS disk I/O layer.
+void sd_set_usb_backend(bool enable);
+bool sd_is_usb_backend();
 bool sd_is_gpt();
 void *sd_file_read(const char *path, u32 *fsize);
 int  sd_save_to_file(const void *buf, u32 size, const char *filename);

@@ -28,6 +28,7 @@
 #include "../frontend/fe_tools.h"
 #include "../config.h"
 #include "../storage/emummc.h"
+#include "../storage/usb_storage.h"
 
 extern hekate_config h_cfg;
 
@@ -1083,6 +1084,7 @@ void hos_launch(ini_sec_t *cfg)
 
 	// Unmount SD card and eMMC.
 	sd_end();
+	usb_storage_end();
 	emmc_end();
 
 	// Close AHB aperture. Important when stock old secmon is used.

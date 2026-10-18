@@ -21,6 +21,7 @@
 void print_fuseinfo();
 void print_mmc_info();
 void print_sdcard_info();
+void print_usb_info();
 void print_fuel_gauge_info();
 void print_battery_charger_info();
 void print_battery_info();

@@ -88,7 +88,24 @@ There are four possible type of entries. "**[ ]**": Boot entry, "**{ }**": Capti
 | bootprotect=0      | 0: Disable, 1: Protect bootloader folder from being corrupted by disallowing reading or editing in HOS. |
 | updater2p=0        | 0: Disable, 1: Force updates (if needed) the reboot2payload binary to be hekate. |
 | backlight=100      | Screen backlight level. 0-255.                                 |
+| usbstorage=0       | 0: Disable, 1: Use a USB mass storage drive (via OTG adapter or dock) as the main storage instead of the SD card. See [USB drive as main storage](#usb-drive-as-main-storage). |
 
+
+### USB drive as main storage
+
+hekate can read its configuration, payloads, Nyx and the HOS/L4T boot files from a USB mass storage drive (USB flash drive, SSD or HDD, 512-byte sectors, FAT32/exFAT) instead of the SD card. The drive can be connected directly with a USB-C OTG adapter or through the dock.
+
+Requirements:
+- `bootloader/sys/libsys_usbh.bso` on the SD card (the USB host driver library, built with hekate and part of the bootloader folder).
+- The Tegra210 XUSB host firmware at `bootloader/sys/xusbfw.bin` **on the SD card**. This is the stock L4T file `tegra21x_xusb_firmware` (also found as `nvidia/tegra210/xusb.bin` in linux-firmware). It is not distributed with hekate. An SD card is therefore always needed to start.
+- `usbstorage=1` in `[config]` of `bootloader/hekate_ipl.ini` on the SD card. hekate then switches to the drive and reads `bootloader/hekate_ipl.ini` and everything else from it. If no drive is found, the SD card is used.
+
+Without the key, the drive can be inspected and switched to at runtime from `Tools` -> `USB drive as main storage` (also under `Console info` -> `USB Drive`). The status bar shows the active storage.
+
+Notes:
+- emuMMC (`emuMMC/emummc.ini` and its data) stays on the SD card, because Atmosphere only reads emuMMC from there.
+- Nyx is launched from the drive but still runs from the SD card, so keep a complete `bootloader` folder on the SD card as well.
+- Drives are accessed in USB 2.0 High Speed. USB 3.0 drives work at USB 2.0 speed.
 
 ### Boot entry key/value combinations:
 

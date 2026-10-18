@@ -19,6 +19,8 @@
 
 #include <bdk.h>
 
+#include "../storage/usb_storage.h"
+
 #include "fe_info.h"
 #include "../config.h"
 #include "../hos/hos.h"
@@ -196,6 +198,11 @@ void print_sdcard_info()
 	gfx_clear_partial_grey(0x1B, 0, 1256);
 	gfx_con_setpos(0, 0);
 
+	// Probe the SD card itself, even while a USB drive serves volume 0.
+	bool usb_primary = usb_storage_is_primary();
+	if (usb_primary)
+		usb_storage_set_primary(false);
+
 	if (sd_initialize(false))
 	{
 		gfx_printf("%kCard IDentification:%k\n", TXT_CLR_CYAN_L, TXT_CLR_DEFAULT);
@@ -260,6 +267,84 @@ void print_sdcard_info()
 		sd_end();
 	}
 
+	if (usb_primary)
+		usb_storage_set_primary(true);
+
+	btn_wait();
+}
+
+void print_usb_info()
+{
+	static const u32 SECTORS_TO_MIB_COEFF = 11;
+	static const char *speeds[] = { "?", "Full", "Low", "High", "Super" };
+
+	gfx_clear_partial_grey(0x1B, 0, 1256);
+	gfx_con_setpos(0, 0);
+
+	bool was_primary = usb_storage_is_primary();
+
+	gfx_printf("%kUSB Drive (host mode)%k\n\n", TXT_CLR_CYAN_L, TXT_CLR_DEFAULT);
+	if (!usb_storage_is_ready())
+		gfx_puts("Connect a USB drive (OTG adapter or dock).\nWaiting up to 10s...\n\n");
+
+	if (!usb_storage_init(10000))
+	{
+		EPRINTF("\nNo usable USB drive found.");
+		goto out;
+	}
+
+	usbh_ctxt_t *cx  = usb_storage_ctxt();
+	usbh_msc_t  *msc = usb_storage_msc();
+	usbh_dev_t  *dev = cx->msc;
+
+	gfx_printf("%kDevice:%k\n", TXT_CLR_CYAN_L, TXT_CLR_DEFAULT);
+	gfx_printf(
+		" Speed:    %s\n"
+		" USB ID:   %04X:%04X\n"
+		" Vendor:   %s\n"
+		" Product:  %s\n"
+		" Port:     %s %d\n\n",
+		speeds[dev->speed <= XHCI_SPEED_SS ? dev->speed : 0], cx->vid, cx->pid,
+		cx->manufacturer[0] ? cx->manufacturer : "-", cx->product[0] ? cx->product : "-",
+		dev->hub_port ? "Hub" : "Root", dev->hub_port ? dev->hub_port : dev->root_port);
+
+	gfx_printf("%kDrive:%k\n", TXT_CLR_CYAN_L, TXT_CLR_DEFAULT);
+	gfx_printf(
+		" Model:    %s %s %s\n"
+		" Capacity: %d MiB (LBA Sectors: 0x%08X)\n\n",
+		msc->vendor, msc->product, msc->revision,
+		msc->num_sectors >> SECTORS_TO_MIB_COEFF, msc->num_sectors);
+	if (msc->capacity_clamped)
+		WPRINTF("Only the first 2 TiB are used.\n");
+
+	// Volume info. The drive has to be volume 0 to be looked at.
+	if (!was_primary && !usb_storage_set_primary(true))
+		goto out;
+
+	f_getfree("", &sd_fs.free_clst, NULL);
+	gfx_printf("%kFound %s volume:%k\n Free:    %d MiB\n Cluster: %d KiB\n\n",
+		TXT_CLR_CYAN_L, sd_fs.fs_type == FS_EXFAT ? "exFAT" : "FAT32", TXT_CLR_DEFAULT,
+		sd_fs.free_clst * sd_fs.csize >> SECTORS_TO_MIB_COEFF, (sd_fs.csize > 1) ? (sd_fs.csize >> 1) : 512);
+
+	if (was_primary)
+	{
+		gfx_printf("%kThis drive is the main storage.%k\n\n"
+			"POWER: Switch back to the SD card.\nVOL:   Back.\n", TXT_CLR_GREENISH, TXT_CLR_DEFAULT);
+		if (btn_wait() & BTN_POWER)
+			usb_storage_set_primary(false);
+		return;
+	}
+
+	gfx_puts("POWER: Use this drive as the main storage.\n"
+			 "       Configs, payloads, Nyx and boot files\n"
+			 "       are then read from it. emuMMC stays\n"
+			 "       on the SD card.\n"
+			 "VOL:   Back.\n");
+	if (!(btn_wait() & BTN_POWER))
+		usb_storage_set_primary(false);
+	return;
+
+out:
 	btn_wait();
 }
 

@@ -12,6 +12,15 @@
 #include <bdk.h>
 
 #include <libs/fatfs/diskio.h>	/* FatFs lower layer API */
+#include "../../storage/usb_storage.h"
+
+/*
+ * Physical drives:
+ *  0: Boot volume. The SD card, or the USB drive when it is the main storage.
+ *  1: The SD card itself (used for emuMMC while the USB drive is drive 0).
+ */
+#define DRIVE_BOOT   0
+#define DRIVE_SDCARD 1
 
 /*-----------------------------------------------------------------------*/
 /* Get Drive Status                                                      */
@@ -43,6 +52,9 @@ DRESULT disk_read (
 	UINT count		/* Number of sectors to read */
 )
 {
+	if (pdrv == DRIVE_BOOT && sd_is_usb_backend())
+		return usb_storage_read(sector, count, buff) ? RES_ERROR : RES_OK;
+
 	return sdmmc_storage_read(&sd_storage, sector, count, buff) ? RES_OK : RES_ERROR;
 }
 
@@ -56,6 +68,9 @@ DRESULT disk_write (
 	UINT count			/* Number of sectors to write */
 )
 {
+	if (pdrv == DRIVE_BOOT && sd_is_usb_backend())
+		return usb_storage_write(sector, count, buff) ? RES_ERROR : RES_OK;
+
 	return sdmmc_storage_write(&sd_storage, sector, count, (void *)buff) ? RES_OK : RES_ERROR;
 }
 

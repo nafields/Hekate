@@ -33,6 +33,7 @@ typedef struct _hekate_config
 	u32 autonogc;
 	u32 updater2p;
 	u32 bootprotect;
+	u32 usbstorage;
 	// Global temporary config.
 	bool t210b01;
 	bool emummc_force_disable;
