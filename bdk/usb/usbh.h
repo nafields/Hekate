@@ -227,4 +227,28 @@ int  usbh_bulk_in(void *buf, u32 len, u32 *actual, u32 timeout_ms);
 /* Recover a halted (STALLed) bulk pipe: Reset EP + Set TR Dequeue + CLEAR_FEATURE. */
 int  usbh_bulk_clear_halt(bool in);
 
+/*
+ * Dock support (usbh_dock.c): swap the Type-C data role to host and tell a
+ * Nintendo dock to switch its USB hub on, through the BM92T36 PD controller.
+ * Call before probing the port while docked (external VBUS present).
+ */
+#define USBH_DOCK_OK       0  /* Nintendo dock: hub enabled.                        */
+#define USBH_DOCK_NONE     1  /* Nothing to do: no PD source, or an OTG adapter.    */
+#define USBH_DOCK_GENERIC  2  /* PD source that is not a Nintendo dock; role swapped. */
+#define USBH_DOCK_OLD_FW   3  /* Nintendo dock with firmware that lacks hub control. */
+#define USBH_DOCK_ERROR    4  /* A step failed or was rejected.                      */
+int  usbh_dock_enable(void);
+
+/* External VBUS (dock or charger) on the connector? */
+bool usbh_vbus_present(void);
+/*
+ * usbh_init() with the policy around it: source 5V only without external
+ * VBUS, restart the host when a dock or charger appears while sourcing, run
+ * the dock handshake once per session. fw must stay valid (resident
+ * buffer): it is used again on a restart. usbh_probe_reset() after
+ * usbh_deinit() to forget the session state.
+ */
+int  usbh_probe(const void *fw, u32 fw_size, u32 timeout_ms);
+void usbh_probe_reset(void);
+
 #endif /* _USBH_H_ */

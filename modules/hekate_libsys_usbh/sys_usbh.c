@@ -30,6 +30,7 @@
 #include <soc/clock.h>
 #include <soc/gpio.h>
 #include <soc/hw_init.h>
+#include <soc/i2c.h>
 #include <soc/pmc.h>
 #include <soc/timer.h>
 #include <soc/t210.h>
@@ -56,6 +57,9 @@ void gpio_write(u32 port, u32 pins, int high)            { host->gpio_write(port
 void gpio_direction_output(u32 port, u32 pins, int high) { host->gpio_direction_output(port, pins, high); }
 
 u32  hw_get_chip_id() { return host->hw_get_chip_id(); }
+
+int  i2c_send_buf_big(u32 i2c_idx, u32 dev_addr, u8 *buf, u32 size)         { return host->i2c_send_buf_big(i2c_idx, dev_addr, buf, size); }
+int  i2c_recv_buf_big(u8 *buf, u32 size, u32 i2c_idx, u32 dev_addr, u32 reg) { return host->i2c_recv_buf_big(buf, size, i2c_idx, dev_addr, reg); }
 
 void gfx_eputs(const char *s) { host->eputs(s); }
 
@@ -123,5 +127,8 @@ void _usbh_module_init(usbh_module_t *mod, bdkParams_t params)
 	mod->msc_read       = usbh_msc_read;
 	mod->msc_write      = usbh_msc_write;
 	mod->msc_get        = usbh_msc_get;
+	mod->dock_enable    = usbh_dock_enable;
+	mod->probe          = usbh_probe;
+	mod->probe_reset    = usbh_probe_reset;
 	mod->magic          = USBH_MODULE_MAGIC;
 }

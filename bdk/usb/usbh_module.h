@@ -31,7 +31,7 @@
  * entry point fills in the driver entry points.
  */
 #define USBH_MODULE_PATH  "bootloader/sys/libsys_usbh.bso"
-#define USBH_MODULE_MAGIC 0x48425356 // "USBH" + ABI revision 1.
+#define USBH_MODULE_MAGIC 0x48425357 // "USBH" + ABI revision 2.
 
 typedef struct _usbh_module_t
 {
@@ -45,6 +45,8 @@ typedef struct _usbh_module_t
 	void (*gpio_write)(u32 port, u32 pins, int high);
 	void (*gpio_direction_output)(u32 port, u32 pins, int high);
 	u32  (*hw_get_chip_id)(void);
+	int  (*i2c_send_buf_big)(u32 i2c_idx, u32 dev_addr, u8 *buf, u32 size);
+	int  (*i2c_recv_buf_big)(u8 *buf, u32 size, u32 i2c_idx, u32 dev_addr, u32 reg);
 	void (*eputs)(const char *s);
 
 	// Driver entry points provided by the module.
@@ -58,6 +60,9 @@ typedef struct _usbh_module_t
 	int  (*msc_read)(u32 sector, u32 count, void *buf);
 	int  (*msc_write)(u32 sector, u32 count, const void *buf);
 	usbh_msc_t *(*msc_get)(void);
+	int  (*dock_enable)(void);
+	int  (*probe)(const void *fw, u32 fw_size, u32 timeout_ms);
+	void (*probe_reset)(void);
 } usbh_module_t;
 
 #endif /* _USBH_MODULE_H_ */

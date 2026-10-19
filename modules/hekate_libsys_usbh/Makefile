@@ -13,7 +13,7 @@ VPATH = ./ ../../$(BDKDIR)/usb/ ../../$(BDKDIR)/power/
 
 # Module entry and bdk service shims, the XHCI host and MSC drivers, VBUS regulator control.
 OBJS = $(addprefix $(BUILD)/,\
-	sys_usbh.o usbh.o usbh_msc.o regulator_5v.o \
+	sys_usbh.o usbh.o usbh_msc.o usbh_dock.o regulator_5v.o \
 )
 
 GFX_INC := '"../bootloader/gfx/gfx.h"'

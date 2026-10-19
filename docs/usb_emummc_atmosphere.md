@@ -63,13 +63,14 @@ Patch the `usb` sysmodule (`0100000000000006`) with Atmosphere exefs IPS patches
 - 45 s wait with prompt and VOL- skip at boot (`usbstorage=1`) and before launching HOS with a USB emuMMC.
 - BQ24193 status checked before host init: no 5V boost when VBUS/PG is present; if docked mid-wait, the host restarts without sourcing.
 - Dock hub as one tier, every connected port probed until a mass storage device is found.
+- Dock handshake (`bdk/usb/usbh_dock.c`, run once per session when external VBUS is present, before the host is started). Resolved by reading the L4T `bm92txx` driver (CTCaer switch-l4t-kernel-4.9): the dock's USB hub does not enumerate on its own. In the dock the console is a USB-PD sink and, by Type-C default, the USB device (UFP). The BM92T36 PD controller does nothing beyond the power contract by itself, so the host has to drive it over I2C: request the 15 V contract if it is not already in place, `PS_RDY`, `DR_SWAP` to become the host (DFP), then Nintendo's vendor defined messages: Discover Identity (VID 0x057E, PID 0x2003), Enter Nintendo alt mode (SVID 0x7E05), device state query, LED on, and `HUB_CONTROL` enable, retried while the dock answers busy. Only after that message does the hub power up. DisplayPort is not entered. hekate polls the controller's alert register instead of using its interrupt line. An OTG adapter (`OTG_INSERT` / source mode) and third party PD sources (role swap only) are told apart from the dock. Dock firmware without hub control is reported on screen.
 
-Open hardware questions: whether the dock hub enumerates with the console in hekate (data role on the Type-C link; hekate only reads the BM92T36 PD controller today), whether the charger reports dock VBUS early enough, HDD spin-up on an OTG adapter.
+Remaining hardware questions: whether the charger reports dock VBUS early enough, HDD spin-up on an OTG adapter, and whether the dock accepts the sequence from a cold hekate without the HOS-side timing.
 
 ## Plan
 
 1. Handheld bring-up with an OTG adapter: USB Drive info page, mount, launch a payload.
-2. Same in the dock (settles the data role question).
+2. Same in the dock (verifies the BM92T36 dock handshake and the hub enable).
 3. Full flow with a normal SD emuMMC; Nyx copy to a scratch drive; hekate reads package1 from it.
 4. emuMMC fork: port drivers, type 3, firmware from SD, SMMU answer; boot with `usb` patched out.
 5. `usb` exefs patches per Horizon version.

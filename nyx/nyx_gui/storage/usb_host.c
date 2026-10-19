@@ -29,6 +29,7 @@
 /* The XHCI/MSC drivers: the same DRAM library hekate uses. */
 static usbh_module_t usbh;
 static bool usbh_loaded = false;
+static u32  usbh_fw_size = 0; // XUSB firmware resident in USBH_FW_BUF.
 
 static bool _usb_host_load_module(void)
 {
@@ -45,6 +46,8 @@ static bool _usb_host_load_module(void)
 	usbh.gpio_write            = gpio_write;
 	usbh.gpio_direction_output = gpio_direction_output;
 	usbh.hw_get_chip_id        = hw_get_chip_id;
+	usbh.i2c_send_buf_big      = i2c_send_buf_big;
+	usbh.i2c_recv_buf_big      = i2c_recv_buf_big;
 	usbh.eputs                 = gfx_eputs;
 
 	if (!ianos_loader(USBH_MODULE_PATH, DRAM_LIB, &usbh) || usbh.magic != USBH_MODULE_MAGIC)
@@ -74,14 +77,6 @@ bool usb_host_is_ready(void)
 	return usbh_loaded && usbh.is_ready() && usbh.msc_get()->ready;
 }
 
-/* VBUS already driven from outside (dock or charger)? Then the console is a
- * power sink and must not switch its own 5V onto the connector. */
-static bool _usb_host_vbus_present(void)
-{
-	u8 status = i2c_recv_byte(I2C_1, BQ24193_I2C_ADDR, BQ24193_Status);
-	return (status & (BQ24193_STATUS_VBUS_MASK | BQ24193_STATUS_PG_MASK)) != 0;
-}
-
 bool usb_host_init(u32 timeout_ms, const char **error_out)
 {
 	const char *error = NULL;
@@ -95,20 +90,17 @@ bool usb_host_init(u32 timeout_ms, const char **error_out)
 		goto out;
 	}
 
-	const void *fw = NULL;
-	u32 fw_size = 0;
-	if (!usbh.is_initialized())
+	// The firmware stays resident: the module reloads it on a host restart.
+	if (!usbh_fw_size)
+		usbh_fw_size = _usb_host_load_fw();
+	if (!usbh_fw_size)
 	{
-		fw_size = _usb_host_load_fw();
-		if (!fw_size)
-		{
-			error = "bootloader/sys/xusbfw.bin is missing!";
-			goto out;
-		}
-		fw = (const void *)USBH_FW_BUF_ADDR;
+		error = "bootloader/sys/xusbfw.bin is missing!";
+		goto out;
 	}
 
-	int res = usbh.init(fw, fw_size, timeout_ms, !_usb_host_vbus_present());
+	// VBUS policy, dock handshake and host restarts live in the module.
+	int res = usbh.probe((const void *)USBH_FW_BUF_ADDR, usbh_fw_size, timeout_ms);
 	if (res == USB_ERROR_TIMEOUT)
 		error = "No USB drive connected.";
 	else if (res)
@@ -137,6 +129,10 @@ int usb_host_write(u32 sector, u32 count, const void *buf)
 
 void usb_host_end(void)
 {
-	if (usbh_loaded && usbh.is_initialized())
-		usbh.deinit();
+	if (usbh_loaded)
+	{
+		if (usbh.is_initialized())
+			usbh.deinit();
+		usbh.probe_reset();
+	}
 }

@@ -106,6 +106,7 @@ Notes:
 - emuMMC (`emuMMC/emummc.ini` and its data) stays on the SD card, because Atmosphere only reads emuMMC from there.
 - Nyx is launched from the drive but still runs from the SD card, so keep a complete `bootloader` folder on the SD card as well.
 - Drives are accessed in USB 2.0 High Speed. USB 3.0 drives work at USB 2.0 speed.
+- In the dock, hekate first talks to the USB-PD controller to take the USB host role and switch the dock's hub on (the dock LED turns on), then looks for the drive on the hub. A charger or third party dock gets the role swap only.
 
 ### emuMMC on a USB drive
 

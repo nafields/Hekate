@@ -29,7 +29,7 @@
 /* The XHCI/MSC drivers: a DRAM library loaded from the SD card. */
 static usbh_module_t usbh;
 static bool usbh_loaded = false;
-static bool usbh_sourcing_vbus = false; // Our 5V is on the connector.
+static u32  usbh_fw_size = 0; // XUSB firmware resident in USBH_FW_BUF.
 
 /* The SD card as FatFS volume 1 while the USB drive holds volume 0. */
 static FATFS sd_card_fs;
@@ -53,6 +53,8 @@ static bool _usb_storage_load_module(void)
 	usbh.gpio_write            = gpio_write;
 	usbh.gpio_direction_output = gpio_direction_output;
 	usbh.hw_get_chip_id        = hw_get_chip_id;
+	usbh.i2c_send_buf_big      = i2c_send_buf_big;
+	usbh.i2c_recv_buf_big      = i2c_recv_buf_big;
 	usbh.eputs                 = gfx_eputs;
 
 	if (!ianos_loader(USBH_MODULE_PATH, DRAM_LIB, &usbh) || usbh.magic != USBH_MODULE_MAGIC)
@@ -93,14 +95,6 @@ bool usb_storage_is_ready(void)
 	return usbh_loaded && usbh.is_ready() && usbh.msc_get()->ready;
 }
 
-/* VBUS already driven from outside (dock or charger)? Then the console is a
- * power sink and must not switch its own 5V onto the connector. */
-static bool _usb_storage_vbus_present(void)
-{
-	u8 status = i2c_recv_byte(I2C_1, BQ24193_I2C_ADDR, BQ24193_Status);
-	return (status & (BQ24193_STATUS_VBUS_MASK | BQ24193_STATUS_PG_MASK)) != 0;
-}
-
 bool usb_storage_init(u32 timeout_ms)
 {
 	if (usb_storage_is_ready())
@@ -110,21 +104,16 @@ bool usb_storage_init(u32 timeout_ms)
 	if (!_usb_storage_load_module())
 		return false;
 
-	const void *fw = NULL;
-	u32 fw_size = 0;
-	if (!usbh.is_initialized())
-	{
-		fw_size = _usb_storage_load_fw();
-		if (!fw_size)
-			return false;
-		fw = (const void *)USBH_FW_BUF_ADDR;
-	}
-
-	bool source_vbus = !_usb_storage_vbus_present();
-	if (usbh.init(fw, fw_size, timeout_ms, source_vbus))
+	// The firmware stays resident: the module reloads it on a host restart.
+	if (!usbh_fw_size)
+		usbh_fw_size = _usb_storage_load_fw();
+	if (!usbh_fw_size)
 		return false;
 
-	usbh_sourcing_vbus = source_vbus;
+	// VBUS policy, dock handshake and host restarts live in the module.
+	if (usbh.probe((const void *)USBH_FW_BUF_ADDR, usbh_fw_size, timeout_ms))
+		return false;
+
 	return !usbh.msc_init();
 }
 
@@ -138,11 +127,6 @@ bool usb_storage_wait(u32 timeout_ms)
 
 	for (u32 waited = 0; waited < timeout_ms; waited += 1000)
 	{
-		// Docked or charger plugged in while we were sourcing 5V: restart the
-		// host without it before probing again.
-		if (usbh_loaded && usbh.is_initialized() && usbh_sourcing_vbus && _usb_storage_vbus_present())
-			usbh.deinit();
-
 		if (usb_storage_init(1000))
 			return true;
 		if (btn_read_vol() & BTN_VOL_DOWN)
@@ -229,7 +213,10 @@ void usb_storage_end(void)
 		sd_set_usb_backend(false);
 	}
 
-	if (usbh_loaded && usbh.is_initialized())
-		usbh.deinit();
-	usbh_sourcing_vbus = false;
+	if (usbh_loaded)
+	{
+		if (usbh.is_initialized())
+			usbh.deinit();
+		usbh.probe_reset();
+	}
 }
