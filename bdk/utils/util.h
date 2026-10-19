@@ -62,7 +62,8 @@ typedef struct _nyx_info_t
 	u32 magic;
 	u32 sd_init;
 	u32 sd_errors[3];
-	u8  rsvd[0x1000];
+	u32 usb_storage; // 1: hekate booted Nyx with a USB drive as the main storage.
+	u8  rsvd[0xFFC];
 	u32 disp_id;
 	u32 errors;
 } nyx_info_t;

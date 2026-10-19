@@ -88,7 +88,60 @@ There are four possible type of entries. "**[ ]**": Boot entry, "**{ }**": Capti
 | bootprotect=0      | 0: Disable, 1: Protect bootloader folder from being corrupted by disallowing reading or editing in HOS. |
 | updater2p=0        | 0: Disable, 1: Force updates (if needed) the reboot2payload binary to be hekate. |
 | backlight=100      | Screen backlight level. 0-255.                                 |
+| usbstorage=0       | 0: Disable, 1: Use a USB mass storage drive (via OTG adapter or dock) as the main storage instead of the SD card. See [USB drive as main storage](#usb-drive-as-main-storage). |
 
+
+### USB drive as main storage
+
+hekate can read its configuration, payloads, Nyx and the HOS/L4T boot files from a USB mass storage drive (USB flash drive, SSD or HDD, 512-byte sectors, FAT32/exFAT) instead of the SD card. The drive can be connected directly with a USB-C OTG adapter or through the dock.
+
+Requirements:
+- `bootloader/sys/libsys_usbh.bso` on the SD card (the USB host driver library, built with hekate and part of the bootloader folder).
+- The Tegra210 XUSB host firmware at `bootloader/sys/xusbfw.bin` **on the SD card**. This is the stock L4T file `tegra21x_xusb_firmware` (also found as `nvidia/tegra210/xusb.bin` in linux-firmware). It is not distributed with hekate. An SD card is therefore always needed to start.
+- `usbstorage=1` in `[config]` of `bootloader/hekate_ipl.ini` on the SD card. hekate then switches to the drive and reads `bootloader/hekate_ipl.ini` and everything else from it. If no drive is found, the SD card is used.
+
+Without the key, the drive can be inspected and switched to at runtime from `Tools` -> `USB drive as main storage` (also under `Console info` -> `USB Drive`). The status bar shows the active storage.
+
+Notes:
+- emuMMC (`emuMMC/emummc.ini` and its data) stays on the SD card, because Atmosphere only reads emuMMC from there.
+- Nyx is launched from the drive but still runs from the SD card, so keep a complete `bootloader` folder on the SD card as well.
+- Drives are accessed in USB 2.0 High Speed. USB 3.0 drives work at USB 2.0 speed.
+- In the dock, hekate first talks to the USB-PD controller to take the USB host role and switch the dock's hub on (the dock LED turns on), then looks for the drive on the hub. A charger or third party dock gets the role swap only.
+
+### emuMMC on a USB drive
+
+An emuMMC can also be a raw image on the USB drive. hekate reads it for its own needs (package1, keyblobs) and passes it to Atmosphere as emuMMC type `3` with the start sector, the same way a raw SD partition emuMMC is passed as type `1`.
+
+> **Atmosphere's stock `emummc` module only has an SD card driver.** Booting a USB emuMMC requires an Atmosphere build whose emummc module implements a USB mass storage backend. Until then hekate refuses to launch HOS with a USB emuMMC. Once such a build is installed, add `usb_atmosphere=1` to `emummc.ini` to allow the launch.
+
+Layout on the drive (identical to a raw SD partition emuMMC, so an existing one can be copied sector by sector):
+
+| Offset from `sector` | Content                          |
+| -------------------- | -------------------------------- |
+| `0x0`                | BOOT0 (0x2000 sectors, 4 MiB)    |
+| `0x2000`             | BOOT1 (0x2000 sectors, 4 MiB)    |
+| `0x4000`             | GPP (raw eMMC user partition)    |
+
+The image must not overlap the drive's FAT partition. Configuration in `emuMMC/emummc.ini` **on the SD card**:
+
+```
+[emummc]
+enabled=1
+usb_enabled=1
+sector=0x1A00000
+path=emuMMC/USB0
+nintendo_path=emuMMC/USB0/Nintendo
+id=0x0
+usb_atmosphere=0
+```
+
+`emupath=` boot entries work too: a folder with a `usb_based` file (a 4-byte little endian start sector, like `raw_based`) marks a USB emuMMC.
+
+Creating one from Nyx: `emuMMC` -> `Create emuMMC` -> `USB Drive`, then choose `sysMMC` (copy the internal eMMC) or `emuMMC` (copy the active SD Raw Partition emuMMC). Nyx waits for the drive, places the image in the free space after the drive's last MBR partition (claiming it as a type `0xE0` entry so other systems leave it alone), copies BOOT0/BOOT1/GPP with progress, writes `emuMMC/USBxx/usb_based` and `emummc.ini` on the SD card, and selects it. Existing USB emuMMCs show up in `Change emuMMC`. The drive must use MBR (not GPT) and have a free entry.
+
+What Atmosphere receives in the exosphere emummc config: `base_cfg.type = 3`, `partition_cfg.start_sector = sector` (LBA on the USB drive, 512-byte sectors), `base_cfg.id`, `nintendo_path`. The drive is the first USB mass storage device reachable from the console (OTG adapter or dock hub).
+
+The Atmosphere side (an emummc module that reads the drive) is specified in [docs/usb_emummc_atmosphere.md](docs/usb_emummc_atmosphere.md).
 
 ### Boot entry key/value combinations:
 

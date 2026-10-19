@@ -31,6 +31,7 @@
 #include <libs/compr/blz.h>
 #include <libs/fatfs/ff.h>
 #include "storage/emummc.h"
+#include "storage/usb_storage.h"
 
 #include "frontend/fe_tools.h"
 #include "frontend/fe_info.h"
@@ -206,6 +207,7 @@ static void _launch_payload(char *path, bool update, bool clear_screen)
 		goto out;
 
 	sd_end();
+	usb_storage_end();
 
 	if (size < 0x30000)
 	{
@@ -619,7 +621,9 @@ static void _nyx_load_run()
 	if (!nyx)
 		return;
 
+	bool usb_storage = usb_storage_is_primary();
 	sd_end();
+	usb_storage_end();
 
 	render_static_bootlogo();
 	display_backlight_brightness(h_cfg.backlight, 1000);
@@ -659,6 +663,7 @@ static void _nyx_load_run()
 	// Set SD card initialization info.
 	nyx_str->info.magic   = NYX_NEW_INFO;
 	nyx_str->info.sd_init = sd_get_mode();
+	nyx_str->info.usb_storage = usb_storage;
 
 	// Set SD card error info.
 	u16 *sd_errors = sd_get_error_count();
@@ -742,6 +747,42 @@ static void _check_for_updated_bootloader()
 	}
 }
 
+/*
+ * [config] usbstorage=1: a USB drive is the main storage. The key is read from
+ * the SD card, then volume 0 is switched to the drive and the configuration
+ * is read again from there. On failure the SD card stays the main storage.
+ */
+static bool _usb_storage_from_config(link_t *sections)
+{
+	LIST_FOREACH_ENTRY(ini_sec_t, ini_sec, sections, link)
+	{
+		if (ini_sec->type != INI_CHOICE || strcmp(ini_sec->name, "config"))
+			continue;
+
+		LIST_FOREACH_ENTRY(ini_kv_t, kv, &ini_sec->kvs, link)
+			if (!strcmp("usbstorage", kv->key))
+				h_cfg.usbstorage = atoi(kv->val);
+		break;
+	}
+
+	if (!h_cfg.usbstorage || usb_storage_is_primary())
+		return false;
+
+	gfx_clear_grey(0x1B);
+	gfx_con_setpos(0, 0);
+	display_backlight_brightness(h_cfg.backlight, 1000);
+
+	// Long enough to unplug the injector and move the console into the dock.
+	bool usb_ok = usb_storage_wait(45000) && usb_storage_set_primary(true);
+	if (!usb_ok)
+	{
+		WPRINTF("\nUSB drive not found or unusable!\nUsing SD card as main storage...");
+		msleep(3000);
+	}
+
+	return usb_ok;
+}
+
 static void _auto_launch()
 {
 	struct _bmp_data
@@ -773,12 +814,21 @@ static void _auto_launch()
 	LIST_INIT(ini_sections);
 	LIST_INIT(ini_list_sections);
 
-	// Load emuMMC configuration.
-	emummc_load_cfg();
-
 	// Parse hekate main configuration.
 	if (!ini_parse(&ini_sections, "bootloader/hekate_ipl.ini", false))
 		goto out; // Can't load hekate_ipl.ini.
+
+	// Switch to the USB drive if configured and re-read the configuration from it.
+	if (_usb_storage_from_config(&ini_sections))
+	{
+		ini_free(&ini_sections);
+		LIST_INIT(ini_sections);
+		if (!ini_parse(&ini_sections, "bootloader/hekate_ipl.ini", false))
+			goto out;
+	}
+
+	// Load emuMMC configuration.
+	emummc_load_cfg();
 
 	// Load configuration.
 	LIST_FOREACH_ENTRY(ini_sec_t, ini_sec, &ini_sections, link)
@@ -1343,6 +1393,8 @@ static void _r2c_get_config_t210b01()
 
 static void _ipl_reload()
 {
+	sd_end();
+	usb_storage_end();
 	hw_deinit(false, 0);
 
 	// Reload hekate.
@@ -1411,8 +1463,9 @@ ment_t ment_cinfo[] = {
 	MDEF_HANDLER("Fuses", print_fuseinfo),
 	MDEF_CHGLINE(),
 	MDEF_CAPTION("-- Storage Info --", TXT_CLR_CYAN_L),
-	MDEF_HANDLER("eMMC",    print_mmc_info),
-	MDEF_HANDLER("SD Card", print_sdcard_info),
+	MDEF_HANDLER("eMMC",      print_mmc_info),
+	MDEF_HANDLER("SD Card",   print_sdcard_info),
+	MDEF_HANDLER("USB Drive", print_usb_info),
 	MDEF_CHGLINE(),
 	MDEF_CAPTION("------ Misc ------", TXT_CLR_CYAN_L),
 	MDEF_HANDLER("Battery", print_battery_info),
@@ -1423,6 +1476,9 @@ menu_t menu_cinfo = { ment_cinfo, "Console Info", 0, 0 };
 
 ment_t ment_tools[] = {
 	MDEF_BACK(),
+	MDEF_CHGLINE(),
+	MDEF_CAPTION("------- Storage ------", TXT_CLR_CYAN_L),
+	MDEF_HANDLER("USB drive as main storage", print_usb_info),
 	MDEF_CHGLINE(),
 	MDEF_CAPTION("-------- Other -------", TXT_CLR_WARNING),
 	MDEF_HANDLER("AutoRCM", menu_autorcm),

@@ -30,6 +30,7 @@
 
 static bool sd_mounted = false;
 static bool sd_init_done = false;
+static bool sd_usb_backend = false; // Volume 0 is served by a USB drive.
 static bool insertion_event = false;
 static u16  sd_errors[3] = { 0 }; // Init and Read/Write errors.
 static u32  sd_mode = SD_DEFAULT_SPEED;
@@ -177,8 +178,43 @@ bool sd_initialize(bool power_cycle)
 	return false;
 }
 
+void sd_set_usb_backend(bool enable)
+{
+	if (sd_usb_backend == enable)
+		return;
+
+	// Drop the current volume 0 before the block device behind it changes.
+	if (sd_mounted)
+		f_mount(NULL, "0:", 1);
+	sd_mounted = false;
+
+	sd_usb_backend = enable;
+}
+
+bool sd_is_usb_backend()
+{
+	return sd_usb_backend;
+}
+
 bool sd_mount()
 {
+	if (sd_usb_backend)
+	{
+		if (sd_mounted)
+			return true;
+
+		int res = f_mount(&sd_fs, "0:", 1); // Volume 0 is the USB drive.
+		if (res == FR_OK)
+		{
+			sd_mounted = true;
+			return true;
+		}
+
+		gfx_con.mute = false;
+		EPRINTFARGS("Failed to mount USB drive (FatFS Error %d).", res);
+		return false;
+	}
+
 	if (sd_init_done && sd_mounted)
 		return true;
 
@@ -217,6 +253,16 @@ bool sd_mount()
 
 static void _sd_deinit(bool deinit)
 {
+	if (sd_usb_backend)
+	{
+		// The USB drive stays up; only the volume is released. The SD card
+		// itself was never deinitialized by the backend switch.
+		if (sd_mounted)
+			f_mount(NULL, "0:", 1);
+		sd_mounted = false;
+		return;
+	}
+
 	if (deinit)
 	{
 		insertion_event = false;

@@ -28,6 +28,7 @@
 #include "../frontend/fe_tools.h"
 #include "../config.h"
 #include "../storage/emummc.h"
+#include "../storage/usb_storage.h"
 
 extern hekate_config h_cfg;
 
@@ -824,6 +825,13 @@ void hos_launch(ini_sec_t *cfg)
 			goto error;
 		}
 
+		// Atmosphere's emummc module only reads the SD card unless built with a USB backend.
+		if (emu_cfg.usb && !emu_cfg.usb_atmosphere)
+		{
+			_hos_crit_error("USB emuMMC needs Atmosphere with a USB backend!\nSet usb_atmosphere=1 in emummc.ini once installed.");
+			goto error;
+		}
+
 		ctxt.patch_krn_proc_id = true; // Set kernel process id patching in case of no pkg3.
 		config_kip1patch(&ctxt, "emummc");
 	}
@@ -1083,6 +1091,7 @@ void hos_launch(ini_sec_t *cfg)
 
 	// Unmount SD card and eMMC.
 	sd_end();
+	usb_storage_end();
 	emmc_end();
 
 	// Close AHB aperture. Important when stock old secmon is used.

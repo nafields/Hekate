@@ -26,6 +26,7 @@
 #include "gui.h"
 #include "fe_emummc_tools.h"
 #include "../config.h"
+#include "../storage/usb_host.h"
 #include <libs/fatfs/diskio.h>
 #include <libs/fatfs/ff.h>
 
@@ -53,6 +54,8 @@ void load_emummc_cfg(emummc_cfg_t *emu_info)
 			{
 				if (!strcmp("enabled",     kv->key))
 					emu_info->enabled = atoi(kv->val);
+				else if (!strcmp("usb_enabled", kv->key))
+					emu_info->usb = atoi(kv->val);
 				else if (!strcmp("sector", kv->key))
 					emu_info->sector = strtol(kv->val, NULL, 16);
 				else if (!strcmp("id",     kv->key))
@@ -76,7 +79,7 @@ void load_emummc_cfg(emummc_cfg_t *emu_info)
 	ini_free(&ini_sections);
 }
 
-void save_emummc_cfg(u32 part_idx, u32 sector_start, const char *path)
+static void _save_emummc_cfg(u32 part_idx, u32 sector_start, const char *path, bool usb)
 {
 	sd_mount();
 
@@ -129,7 +132,22 @@ void save_emummc_cfg(u32 part_idx, u32 sector_start, const char *path)
 	else
 		f_puts("\n", &fp);
 
+	// USB drive emuMMC: sector is an LBA on the drive. HOS launch stays
+	// blocked until Atmosphere with a USB backend is installed (usb_atmosphere=1).
+	if (usb)
+		f_puts("usb_enabled=1\nusb_atmosphere=0\n", &fp);
+
 	f_close(&fp);
+}
+
+void save_emummc_cfg(u32 part_idx, u32 sector_start, const char *path)
+{
+	_save_emummc_cfg(part_idx, sector_start, path, false);
+}
+
+void save_emummc_cfg_usb(u32 sector_start, const char *path)
+{
+	_save_emummc_cfg(1, sector_start, path, true);
 }
 
 void update_emummc_base_folder(char *outFilename, u32 sdPathLen, u32 currPartIdx)
@@ -979,6 +997,360 @@ out_failed:
 	lv_label_set_text(gui->label_finish, txt_buf);
 
 out:
+	free(txt_buf);
+	free(gui->base_path);
+	sd_unmount();
+}
+
+/* ---------------- emuMMC on a USB drive ---------------------------------- */
+
+/* Same layout as a raw SD partition: 16 MiB gap, BOOT0, BOOT1, GPP. */
+#define USB_EMUMMC_GAP_SECTORS  0x8000
+#define USB_EMUMMC_BOOT_SECTORS 0x2000
+
+typedef struct _usb_emummc_place_t
+{
+	u32 sector;      // Image start (BOOT0) on the drive.
+	u32 entry_start; // MBR entry start.
+	u32 entry_size;  // MBR entry size.
+	int entry_idx;   // Free MBR entry to claim.
+} usb_emummc_place_t;
+
+/* Find unpartitioned space after the last MBR partition of the USB drive. */
+static bool _usb_emummc_find_space(emmc_tool_gui_t *gui, u32 gpp_sectors, usb_emummc_place_t *place, mbr_t *mbr)
+{
+	u32 drive_sectors = usb_host_msc()->num_sectors;
+
+	if (usb_host_read(0, 1, mbr))
+	{
+		lv_label_ins_text(gui->label_log, LV_LABEL_POS_LAST, "#FFDD00 Failed to read USB drive MBR!#\n");
+		return false;
+	}
+
+	u32 max_end = 0;
+	place->entry_idx = -1;
+
+	if (mbr->boot_signature != 0xAA55)
+	{
+		// Unpartitioned drive: start a fresh MBR.
+		memset(mbr, 0, sizeof(mbr_t));
+		mbr->boot_signature = 0xAA55;
+		place->entry_idx = 0;
+	}
+	else
+	{
+		for (int i = 0; i < 4; i++)
+		{
+			mbr_part_t *part = &mbr->partitions[i];
+			if (part->type == 0xEE)
+			{
+				lv_label_ins_text(gui->label_log, LV_LABEL_POS_LAST, "#FFDD00 GPT drives are not supported!#\n");
+				return false;
+			}
+			if (part->type && part->size_sct)
+			{
+				if (part->start_sct + part->size_sct > max_end)
+					max_end = part->start_sct + part->size_sct;
+			}
+			else if (place->entry_idx < 0)
+				place->entry_idx = i;
+		}
+		if (place->entry_idx < 0)
+		{
+			lv_label_ins_text(gui->label_log, LV_LABEL_POS_LAST, "#FFDD00 No free MBR entry on the USB drive!#\n");
+			return false;
+		}
+	}
+
+	place->entry_start = ALIGN(MAX(max_end, USB_EMUMMC_GAP_SECTORS), USB_EMUMMC_GAP_SECTORS);
+	place->entry_size  = ALIGN(USB_EMUMMC_GAP_SECTORS + 2 * USB_EMUMMC_BOOT_SECTORS + gpp_sectors, USB_EMUMMC_GAP_SECTORS);
+	place->sector      = place->entry_start + USB_EMUMMC_GAP_SECTORS;
+
+	if (place->entry_start + place->entry_size > drive_sectors || place->entry_start + place->entry_size < place->entry_start)
+	{
+		s_printf(gui->txt_buf, "#FFDD00 Not enough free space on the USB drive!#\nNeeded: %d MiB after the last partition.\nFree: %d MiB.\n",
+			place->entry_size >> 11, (drive_sectors > place->entry_start ? drive_sectors - place->entry_start : 0) >> 11);
+		lv_label_ins_text(gui->label_log, LV_LABEL_POS_LAST, gui->txt_buf);
+		return false;
+	}
+
+	return true;
+}
+
+/* Copy one image part (0: BOOT0, 1: BOOT1, 2: GPP) to the USB drive. */
+static int _usb_emummc_copy_part(emmc_tool_gui_t *gui, bool from_emummc, u32 emu_sector, int part, u32 sectors, u32 usb_sector)
+{
+	u32 pct = 0;
+	u32 prevPct = 200;
+	int retryCount = 0;
+	u32 lba_curr = 0;
+	u32 totalSectors = sectors;
+	u32 src_off = emu_sector + part * USB_EMUMMC_BOOT_SECTORS;
+	u32 dst_off = usb_sector + part * USB_EMUMMC_BOOT_SECTORS;
+	u8 *buf = (u8 *)MIXD_BUF_ALIGNED;
+
+	lv_bar_set_value(gui->bar, 0);
+	lv_label_set_text(gui->label_pct, " "SYMBOL_DOT" 0%");
+	lv_obj_set_opa_scale(gui->bar, LV_OPA_COVER);
+	lv_obj_set_opa_scale(gui->label_pct, LV_OPA_COVER);
+	manual_system_maintenance(true);
+
+	while (totalSectors > 0)
+	{
+		// Check for cancellation combo.
+		if (btn_read_vol() == (BTN_VOL_UP | BTN_VOL_DOWN))
+		{
+			lv_label_ins_text(gui->label_log, LV_LABEL_POS_LAST, "\n#FFDD00 The emuMMC was cancelled!#\n");
+			manual_system_maintenance(true);
+			msleep(1000);
+
+			return 0;
+		}
+
+		u32 num = MIN(totalSectors, NUM_SECTORS_PER_ITER);
+
+		// Read from eMMC or from the SD raw emuMMC.
+		retryCount = 0;
+		while (from_emummc ? !sdmmc_storage_read(&sd_storage, src_off + lba_curr, num, buf) :
+		                     !sdmmc_storage_read(&emmc_storage, lba_curr, num, buf))
+		{
+			s_printf(gui->txt_buf, "\n#FFDD00 Error reading %d blocks @LBA %08X,#\n#FFDD00 from %s (try %d). #",
+				num, lba_curr, from_emummc ? "SD" : "eMMC", ++retryCount);
+			lv_label_ins_text(gui->label_log, LV_LABEL_POS_LAST, gui->txt_buf);
+			manual_system_maintenance(true);
+
+			msleep(150);
+			if (retryCount >= 3)
+			{
+				lv_label_ins_text(gui->label_log, LV_LABEL_POS_LAST, "#FF0000 Aborting...#\nPlease try again...\n");
+				manual_system_maintenance(true);
+
+				return 0;
+			}
+		}
+
+		manual_system_maintenance(false);
+
+		// Write to the USB drive.
+		retryCount = 0;
+		while (usb_host_write(dst_off + lba_curr, num, buf))
+		{
+			s_printf(gui->txt_buf, "\n#FFDD00 Error writing %d blocks @LBA %08X,#\n#FFDD00 to USB (try %d). #",
+				num, dst_off + lba_curr, ++retryCount);
+			lv_label_ins_text(gui->label_log, LV_LABEL_POS_LAST, gui->txt_buf);
+			manual_system_maintenance(true);
+
+			msleep(150);
+			if (retryCount >= 3)
+			{
+				lv_label_ins_text(gui->label_log, LV_LABEL_POS_LAST, "#FF0000 Aborting...#\nPlease try again...\n");
+				manual_system_maintenance(true);
+
+				return 0;
+			}
+		}
+
+		manual_system_maintenance(false);
+
+		pct = (u64)((u64)lba_curr * 100u) / (u64)sectors;
+		if (pct != prevPct)
+		{
+			lv_bar_set_value(gui->bar, pct);
+			s_printf(gui->txt_buf, " "SYMBOL_DOT" %d%%", pct);
+			lv_label_set_text(gui->label_pct, gui->txt_buf);
+			manual_system_maintenance(true);
+
+			prevPct = pct;
+		}
+
+		lba_curr += num;
+		totalSectors -= num;
+	}
+
+	lv_bar_set_value(gui->bar, 100);
+	lv_label_set_text(gui->label_pct, " "SYMBOL_DOT" 100%");
+	manual_system_maintenance(true);
+
+	return 1;
+}
+
+void dump_emummc_usb(emmc_tool_gui_t *gui, bool from_emummc)
+{
+	static const char *part_names[] = { "BOOT0", "BOOT1", "GPP" };
+
+	int res = 0;
+	u32 timer = 0;
+	u32 emu_sector = 0;
+	bool emmc_init = false;
+	usb_emummc_place_t place = { 0 };
+
+	char *txt_buf = (char *)malloc(SZ_16K);
+	mbr_t *mbr = (mbr_t *)malloc(sizeof(mbr_t));
+	gui->base_path = (char *)malloc(OUT_FILENAME_SZ);
+	gui->txt_buf = txt_buf;
+
+	txt_buf[0] = 0;
+	lv_label_set_text(gui->label_log, txt_buf);
+	manual_system_maintenance(true);
+
+	if (!sd_mount())
+	{
+		lv_label_set_text(gui->label_info, "#FFDD00 Failed to init SD!#");
+		goto out;
+	}
+
+	if (!emmc_initialize(false))
+	{
+		lv_label_set_text(gui->label_info, "#FFDD00 Failed to init eMMC!#");
+		goto out;
+	}
+	emmc_init = true;
+
+	// Source: the real eMMC, or the active SD raw partition emuMMC.
+	u32 gpp_sectors = emmc_storage.sec_cnt;
+	if (from_emummc)
+	{
+		emummc_cfg_t emu_info;
+		load_emummc_cfg(&emu_info);
+		bool src_ok = emu_info.enabled && emu_info.sector && !emu_info.usb;
+		emu_sector = emu_info.sector;
+		if (emu_info.path)
+			free(emu_info.path);
+		if (emu_info.nintendo_path)
+			free(emu_info.nintendo_path);
+
+		if (!src_ok)
+		{
+			lv_label_set_text(gui->label_info, "#FFDD00 The active emuMMC must be an SD Raw Partition one!#");
+			goto out;
+		}
+
+		// A resized emuMMC has a smaller GPP: stay inside its SD partition.
+		sdmmc_storage_read(&sd_storage, 0, 1, mbr);
+		for (int i = 0; i < 4; i++)
+		{
+			u32 start = mbr->partitions[i].start_sct;
+			u32 size  = mbr->partitions[i].size_sct;
+			if (size && emu_sector >= start && emu_sector < start + size)
+			{
+				u32 avail = start + size - (emu_sector + 2 * USB_EMUMMC_BOOT_SECTORS);
+				if (avail < gpp_sectors)
+					gpp_sectors = avail;
+			}
+		}
+	}
+
+	// Wait for the drive while keeping the GUI alive.
+	lv_label_set_text(gui->label_info, "#FF8000 Connect a USB drive#\n#FF8000 (OTG adapter or dock)...#");
+	manual_system_maintenance(true);
+
+	const char *usb_error = NULL;
+	for (u32 i = 0; i < 60; i++)
+	{
+		if (usb_host_init(500, &usb_error))
+			break;
+		if (usb_error && strcmp(usb_error, "No USB drive connected."))
+			break; // Missing module/firmware or a broken device: no point in waiting.
+		manual_system_maintenance(true);
+	}
+	if (!usb_host_is_ready())
+	{
+		s_printf(txt_buf, "#FFDD00 %s#", usb_error ? usb_error : "No USB drive found.");
+		lv_label_set_text(gui->label_info, txt_buf);
+		goto out;
+	}
+
+	usbh_msc_t *msc = usb_host_msc();
+	if (!_usb_emummc_find_space(gui, gpp_sectors, &place, mbr))
+	{
+		lv_label_set_text(gui->label_info, "#FFDD00 USB drive has no room for the emuMMC!#");
+		goto out;
+	}
+
+	// emuMMC/USBxx on the SD card holds the marker and the Nintendo folder.
+	char sdPath[OUT_FILENAME_SZ];
+	f_mkdir("emuMMC");
+	for (u32 idx = 0; idx < 100; idx++)
+	{
+		s_printf(sdPath, "emuMMC/USB%02d", idx);
+		if (f_stat(sdPath, NULL))
+			break;
+	}
+	f_mkdir(sdPath);
+	strcat(sdPath, "/");
+	strcpy(gui->base_path, sdPath);
+
+	s_printf(txt_buf,
+		"#96FF00 USB drive:# %s %s (%d MiB)\n"
+		"#96FF00 Source:# %s\n"
+		"#96FF00 Image sector:# #FF8000 0x%08X#\n"
+		"#96FF00 Base folder:# %s\n\n",
+		msc->vendor, msc->product, msc->num_sectors >> 11,
+		from_emummc ? "SD emuMMC" : "sysMMC", place.sector, gui->base_path);
+	lv_label_set_text(gui->label_info, txt_buf);
+	manual_system_maintenance(true);
+
+	timer = get_tmr_s();
+	for (int part = 0; part < 3; part++)
+	{
+		u32 sectors = part < 2 ? USB_EMUMMC_BOOT_SECTORS : gpp_sectors;
+		if (!from_emummc)
+			emmc_set_partition(part < 2 ? part + 1 : EMMC_GPP);
+
+		s_printf(txt_buf, "%02d: %s... ", part, part_names[part]);
+		lv_label_ins_text(gui->label_log, LV_LABEL_POS_LAST, txt_buf);
+		manual_system_maintenance(true);
+
+		res = _usb_emummc_copy_part(gui, from_emummc, emu_sector, part, sectors, place.sector);
+		lv_label_ins_text(gui->label_log, LV_LABEL_POS_LAST, res ? "Done!\n" : "#FFDD00 Failed!#\n");
+		manual_system_maintenance(true);
+		if (!res)
+			break;
+	}
+
+	// Claim the space in the drive's MBR (type 0xE0, like SD emuMMC partitions).
+	if (res)
+	{
+		mbr_part_t *entry = &mbr->partitions[place.entry_idx];
+		memset(entry, 0, sizeof(*entry));
+		entry->type      = 0xE0;
+		entry->start_sct = place.entry_start;
+		entry->size_sct  = place.entry_size;
+		entry->start_sct_chs.head = 0xFE; entry->start_sct_chs.sector = 0xFF; entry->start_sct_chs.cylinder = 0xFF;
+		entry->end_sct_chs = entry->start_sct_chs;
+		if (usb_host_write(0, 1, mbr))
+		{
+			lv_label_ins_text(gui->label_log, LV_LABEL_POS_LAST, "#FFDD00 Failed to update USB drive MBR!#\n");
+			res = 0;
+		}
+	}
+
+	timer = get_tmr_s() - timer;
+
+	if (res)
+	{
+		s_printf(txt_buf, "Time taken: %dm %ds.\nFinished!", timer / 60, timer % 60);
+
+		strcpy(sdPath, gui->base_path);
+		strcat(sdPath, "usb_based");
+		FIL fp;
+		f_open(&fp, sdPath, FA_CREATE_ALWAYS | FA_WRITE);
+		f_write(&fp, &place.sector, 4, NULL);
+		f_close(&fp);
+
+		gui->base_path[strlen(gui->base_path) - 1] = 0;
+		save_emummc_cfg_usb(place.sector, gui->base_path);
+	}
+	else
+		s_printf(txt_buf, "Time taken: %dm %ds.", timer / 60, timer % 60);
+
+	lv_label_set_text(gui->label_finish, txt_buf);
+
+out:
+	if (emmc_init)
+		emmc_end();
+	usb_host_end();
+	free(mbr);
 	free(txt_buf);
 	free(gui->base_path);
 	sd_unmount();

@@ -20,11 +20,24 @@
 #include <bdk.h>
 
 #include "emummc.h"
+#include "usb_storage.h"
 #include "../config.h"
 #include <libs/fatfs/ff.h>
 
 extern hekate_config h_cfg;
 emummc_cfg_t emu_cfg = { 0 };
+
+/*
+ * emuMMC always lives on the SD card, since that is where Atmosphere reads
+ * it from. While a USB drive is the main storage (volume 0), SD card files
+ * are reached through volume 1.
+ */
+static char *_emummc_sd_path(char *dst, const char *path)
+{
+	strcpy(dst, usb_storage_sd_volume());
+	strcat(dst, path);
+	return dst;
+}
 
 void emummc_load_cfg()
 {
@@ -35,6 +48,8 @@ void emummc_load_cfg()
 	emu_cfg.file_based_part_size = 0;
 	emu_cfg.active_part = 0;
 	emu_cfg.fs_ver = 0;
+	emu_cfg.usb = 0;
+	emu_cfg.usb_atmosphere = 0;
 	if (!emu_cfg.nintendo_path)
 		emu_cfg.nintendo_path = (char *)malloc(0x200);
 	if (!emu_cfg.emummc_file_based_path)
@@ -43,8 +58,9 @@ void emummc_load_cfg()
 	emu_cfg.nintendo_path[0] = 0;
 	emu_cfg.emummc_file_based_path[0] = 0;
 
+	char ini_path[32];
 	LIST_INIT(ini_sections);
-	if (ini_parse(&ini_sections, "emuMMC/emummc.ini", false))
+	if (ini_parse(&ini_sections, _emummc_sd_path(ini_path, "emuMMC/emummc.ini"), false))
 	{
 		LIST_FOREACH_ENTRY(ini_sec_t, ini_sec, &ini_sections, link)
 		{
@@ -65,6 +81,10 @@ void emummc_load_cfg()
 						emu_cfg.path   = kv->val;
 					else if (!strcmp("nintendo_path", kv->key))
 						strcpy(emu_cfg.nintendo_path, kv->val);
+					else if (!strcmp("usb_enabled",    kv->key))
+						emu_cfg.usb = atoi(kv->val);
+					else if (!strcmp("usb_atmosphere", kv->key))
+						emu_cfg.usb_atmosphere = atoi(kv->val);
 				}
 				break;
 			}
@@ -77,18 +97,31 @@ bool emummc_set_path(char *path)
 	FIL fp;
 	bool found = false;
 
-	strcpy(emu_cfg.emummc_file_based_path, path);
-	strcat(emu_cfg.emummc_file_based_path, "/raw_based");
+	emu_cfg.usb = 0;
 
-	if (!f_open(&fp, emu_cfg.emummc_file_based_path, FA_READ))
+	// raw_based: raw SD partition. usb_based: raw image on the USB drive.
+	// Both markers hold the start sector.
+	_emummc_sd_path(emu_cfg.emummc_file_based_path, path);
+	strcat(emu_cfg.emummc_file_based_path, "/raw_based");
+	bool raw = !f_open(&fp, emu_cfg.emummc_file_based_path, FA_READ);
+	if (!raw)
+	{
+		_emummc_sd_path(emu_cfg.emummc_file_based_path, path);
+		strcat(emu_cfg.emummc_file_based_path, "/usb_based");
+		raw = !f_open(&fp, emu_cfg.emummc_file_based_path, FA_READ);
+		emu_cfg.usb = raw;
+	}
+
+	if (raw)
 	{
 		if (!f_read(&fp, &emu_cfg.sector, 4, NULL))
 			if (emu_cfg.sector)
 				found = true;
+		f_close(&fp);
 	}
 	else
 	{
-		strcpy(emu_cfg.emummc_file_based_path, path);
+		_emummc_sd_path(emu_cfg.emummc_file_based_path, path);
 		strcat(emu_cfg.emummc_file_based_path, "/file_based");
 
 		if (!f_stat(emu_cfg.emummc_file_based_path, NULL))
@@ -144,12 +177,31 @@ int emummc_storage_init_mmc()
 	if (!emu_cfg.enabled || h_cfg.emummc_force_disable)
 		return 0;
 
+	if (emu_cfg.usb)
+	{
+		// Raw image on the USB drive. BOOT0 + BOOT1 + GPP must fit on it.
+		if (!emu_cfg.sector || !usb_storage_wait(45000))
+		{
+			EPRINTF("Failed to init USB emuMMC drive.");
+			goto out;
+		}
+		// The GPP may be smaller than the eMMC (resized source); only require
+		// BOOT0/BOOT1 and the start of GPP to be on the drive.
+		u32 usb_sectors = usb_storage_msc()->num_sectors;
+		if (emu_cfg.sector + 2 * 0x2000 >= usb_sectors)
+		{
+			EPRINTF("USB emuMMC is outside the drive.");
+			goto out;
+		}
+		return 0;
+	}
+
 	if (!sd_mount())
 		goto out;
 
 	if (!emu_cfg.sector)
 	{
-		strcpy(emu_cfg.emummc_file_based_path, emu_cfg.path);
+		_emummc_sd_path(emu_cfg.emummc_file_based_path, emu_cfg.path);
 		strcat(emu_cfg.emummc_file_based_path, "/eMMC");
 
 		if (f_stat(emu_cfg.emummc_file_based_path, &fno))
@@ -193,6 +245,8 @@ int emummc_storage_read(u32 sector, u32 num_sectors, void *buf)
 	{
 		sector += emu_cfg.sector;
 		sector += emummc_raw_get_part_off(emu_cfg.active_part) * 0x2000;
+		if (emu_cfg.usb) // usb_storage returns 0 on success.
+			return !usb_storage_read(sector, num_sectors, buf);
 		return sdmmc_storage_read(&sd_storage, sector, num_sectors, buf);
 	}
 	else
@@ -238,6 +292,8 @@ int emummc_storage_write(u32 sector, u32 num_sectors, void *buf)
 	{
 		sector += emu_cfg.sector;
 		sector += emummc_raw_get_part_off(emu_cfg.active_part) * 0x2000;
+		if (emu_cfg.usb) // usb_storage returns 0 on success.
+			return !usb_storage_write(sector, num_sectors, buf);
 		return sdmmc_storage_write(&sd_storage, sector, num_sectors, buf);
 	}
 	else
@@ -279,7 +335,7 @@ int emummc_storage_set_mmc_partition(u32 partition)
 		return 1;
 	else
 	{
-		strcpy(emu_cfg.emummc_file_based_path, emu_cfg.path);
+		_emummc_sd_path(emu_cfg.emummc_file_based_path, emu_cfg.path);
 		strcat(emu_cfg.emummc_file_based_path, "/eMMC");
 
 		switch (partition)

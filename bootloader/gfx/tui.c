@@ -51,8 +51,9 @@ void tui_sbar(bool force_update)
 
 	max17050_get_property(MAX17050_Current, &battVoltCurr);
 
-	gfx_printf(" %k%d mA%k%K\n", battVoltCurr >= 0 ? TXT_CLR_GREEN_D : TXT_CLR_RED_D,
-			   battVoltCurr / 1000, TXT_CLR_DEFAULT, TXT_CLR_BG);
+	gfx_printf(" %k%d mA%k - Storage: %k%s%k%K\n", battVoltCurr >= 0 ? TXT_CLR_GREEN_D : TXT_CLR_RED_D,
+			   battVoltCurr / 1000, TXT_CLR_GREY, sd_is_usb_backend() ? TXT_CLR_TURQUOISE : TXT_CLR_GREY,
+			   sd_is_usb_backend() ? "USB" : "SD", TXT_CLR_DEFAULT, TXT_CLR_BG);
 
 	gfx_con.fntsz = prevFontSize;
 	gfx_con_setpos(cx, cy);

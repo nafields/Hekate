@@ -256,6 +256,10 @@ typedef struct _t210_usb2d_t
 #define XUSB_DEV_INTR_MASK         0x188
 #define  DEV_INTR_MASK_IP_INT_MASK BIT(16)
 
+/* XUSB HOST IPFS/PCI registers (parallel layout to DEV side) */
+#define XUSB_HOST_CONFIGURATION    0x180
+#define  HOST_CONFIGURATION_EN_FPCI BIT(0)
+
 /* XUSB Pad Control registers */
 #define XUSB_PADCTL_USB2_PAD_MUX 0x4
 #define  PADCTL_USB2_PAD_MUX_USB2_OTG_PAD_PORT0_USB2 (0 << 0)
