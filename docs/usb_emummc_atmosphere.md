@@ -1,0 +1,76 @@
+# USB emuMMC: what Atmosphere needs
+
+Status: hekate side complete on this branch, untested on hardware. Atmosphere side not started.
+
+## Goal
+
+Boot Atmosphere from a USB SSD/HDD in the dock: flip the RCM toggle, inject hekate with a USB-C injector, move the console into the dock, hekate finds the drive through the dock hub, reads boot files and the emuMMC from it and launches exosphere and Atmosphere on it. The SD card stays as a boot stub: the XUSB host firmware (`bootloader/sys/xusbfw.bin`) and the driver module (`bootloader/sys/libsys_usbh.bso`) must be read from it before any USB device exists.
+
+## What exists today
+
+| Piece | State |
+| --- | --- |
+| XHCI host + mass storage driver, one hub tier (dock) as a DRAM module | built, spec-reviewed, untested |
+| hekate boots configs, payloads, Nyx and HOS boot files from the drive (`usbstorage=1`) | built |
+| 45 s wait for the drive with prompt, VOL- to skip; 5V only when no external VBUS | built |
+| USB emuMMC config (`usb_enabled=1`, `usb_based`), exosphere type 3, hekate reads package1 from it | built |
+| Nyx copies sysMMC or the active SD emuMMC to the drive | built |
+| Atmosphere reads the emuMMC from the drive | **not started** |
+
+Without any Atmosphere change the flow works with a normal SD emuMMC. With a USB emuMMC hekate refuses to launch HOS until `usb_atmosphere=1` is set in `emummc.ini`.
+
+## Contract passed to Atmosphere
+
+Exosphere `emummc_config_t`, filled like an SD raw partition emuMMC:
+
+| Field | Value |
+| --- | --- |
+| `base_cfg.magic` | `EFS0` |
+| `base_cfg.type` | `3` (`emuMMC_USB`; 1 = SD partition, 2 = SD files) |
+| `base_cfg.id`, `base_cfg.fs_ver` | as today |
+| `partition_cfg.start_sector` | LBA of BOOT0 on the USB drive, 512-byte sectors |
+| `nintendo_path` | folder on the SD card, as today |
+
+Image layout from `start_sector`: BOOT0 (0x2000 sectors), BOOT1 at +0x2000, GPP at +0x4000. Nyx places it 16 MiB after the drive's last MBR partition and claims the space with a type `0xE0` MBR entry. The drive is the first USB mass storage device reachable, directly or through one hub. USB 2.0 High Speed only.
+
+## Why stock Atmosphere cannot use it
+
+- `emummc` knows `emuMMC_EMMC = 0`, `emuMMC_SD_Raw = 1`, `emuMMC_SD_File = 2`. Raw reads go through its own copy of the SD driver (`sdmmc_storage_read(&sd_storage, ...)`), file reads through its own FatFS mount of the SD card. Any other type ends in a fatal.
+- It runs inside the FS process, before the `usb` sysmodule exists; `usb` is itself loaded from the emuMMC. It must drive the hardware directly.
+- There is one usable USB controller (XUSB). The `usb` sysmodule resets it when it starts.
+
+## Design of the emummc USB backend
+
+Port hekate's driver into the emummc module and have emummc own XUSB for the session. XHCI covers Erista and Mariko; the Erista-only legacy USB1 EHCI controller would avoid the firmware blob but still needs the pad mux and `usb` handled.
+
+| Component | Source | Port notes |
+| --- | --- | --- |
+| XHCI host | `bdk/usb/usbh.c` (~1,300 lines, polled) | MMIO via KIP capabilities: XUSB_HOST `0x70090000` (64 KiB, FPCI at +0x8000, IPFS at +0x9000), XUSB_PADCTL `0x7009F000`, CAR `0x60006000`, PMC `0x7000E400`, FUSE `0x7000F800`, GPIO. Replace `bpmp_mmu_maintenance` with `dc cvac`/`dc civac`, `usleep`/`msleep` with `svcSleepThread`. |
+| Mass storage | `bdk/usb/usbh_msc.c` (~350 lines) | keep 512 KiB chained transfers |
+| Dispatch | `emummc_ctx.h`, `emummc.c` | add `emuMMC_USB_Raw = 3`; `EMMC_StoragePartitionOffset = start_sector`; third branch in `emummc_read_write_inner()`: `usb_msc_rw(offset + active_partition * BOOT_PARTITION_SIZE + sector)`; same for the nand patrol check |
+| Firmware | `bootloader/sys/xusbfw.bin` on SD | read with emummc's FatFS into a resident contiguous 128 KiB buffer at first use |
+| DMA memory | static 4 KiB aligned buffers + `svcQueryPhysicalAddress` | as the SD driver; keep each buffer under 64 KiB |
+| Locking | mutex per BOT transaction | FS is multithreaded; HDD spin-up timeouts up to 10 s |
+
+Verify on hardware first: (1) SMMU: is XUSB_HOST's ASID in bypass under mesosphere without an attached device address space? If not, create one (`svcCreateDeviceAddressSpace`, `svcAttachDeviceAddressSpace`, `svcMapDeviceAddressSpaceAligned`) and use device addresses in TRBs. (2) `pcv`/`usb` must not gate XUSB clocks or the XUSBA/XUSBC partitions. (3) LP0 resets XUSB: re-initialise on first access after resume, or declare sleep unsupported in v1.
+
+## The usb sysmodule
+
+Patch the `usb` sysmodule (`0100000000000006`) with Atmosphere exefs IPS patches (`atmosphere/exefs_patches/<name>/<build id>.ips`) so its XUSB host/device bring-up returns early. One patch per Horizon version. Lost in HOS: PC connection (MTP, USB homebrew tools) and USB peripherals in the dock. Kept: charging/PD, HDMI, Joy-Cons, Wi-Fi, Bluetooth.
+
+## hekate side for the dock flow
+
+- 45 s wait with prompt and VOL- skip at boot (`usbstorage=1`) and before launching HOS with a USB emuMMC.
+- BQ24193 status checked before host init: no 5V boost when VBUS/PG is present; if docked mid-wait, the host restarts without sourcing.
+- Dock hub as one tier, every connected port probed until a mass storage device is found.
+
+Open hardware questions: whether the dock hub enumerates with the console in hekate (data role on the Type-C link; hekate only reads the BM92T36 PD controller today), whether the charger reports dock VBUS early enough, HDD spin-up on an OTG adapter.
+
+## Plan
+
+1. Handheld bring-up with an OTG adapter: USB Drive info page, mount, launch a payload.
+2. Same in the dock (settles the data role question).
+3. Full flow with a normal SD emuMMC; Nyx copy to a scratch drive; hekate reads package1 from it.
+4. emuMMC fork: port drivers, type 3, firmware from SD, SMMU answer; boot with `usb` patched out.
+5. `usb` exefs patches per Horizon version.
+6. Resume, removal, spin-up, write workloads; then `usb_atmosphere=1`.

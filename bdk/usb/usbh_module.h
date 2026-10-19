@@ -31,7 +31,7 @@
  * entry point fills in the driver entry points.
  */
 #define USBH_MODULE_PATH  "bootloader/sys/libsys_usbh.bso"
-#define USBH_MODULE_MAGIC 0x48425355 // "USBH"
+#define USBH_MODULE_MAGIC 0x48425356 // "USBH" + ABI revision 1.
 
 typedef struct _usbh_module_t
 {
@@ -49,7 +49,7 @@ typedef struct _usbh_module_t
 
 	// Driver entry points provided by the module.
 	u32  magic;
-	int  (*init)(const void *fw, u32 fw_size, u32 timeout_ms);
+	int  (*init)(const void *fw, u32 fw_size, u32 timeout_ms, bool source_vbus);
 	void (*deinit)(void);
 	bool (*is_initialized)(void);
 	bool (*is_ready)(void);

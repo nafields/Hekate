@@ -1315,7 +1315,7 @@ static int _setup_scratchpad(void)
 
 /* ---------- controller bring-up ---------------------------------------- */
 
-static int _usbh_hc_init(const void *fw, u32 fw_size)
+static int _usbh_hc_init(const void *fw, u32 fw_size, bool source_vbus)
 {
 	usbh_ctxt_t *cx = &usbh_ctxt;
 
@@ -1360,9 +1360,13 @@ static int _usbh_hc_init(const void *fw, u32 fw_size)
 	usleep(1);
 
 	/* Source 5V onto VBUS for bus-powered devices (OTG adapter in handheld
-	 * mode). In the dock the hub is self-powered; this is harmless there. */
-	regulator_5v_enable(REGULATOR_5V_ALL);
-	regulator_5v_usb_src_enable(true);
+	 * mode). Never while VBUS is already driven from outside (dock, charger):
+	 * the caller checks the charger's VBUS status and decides. */
+	if (source_vbus)
+	{
+		regulator_5v_enable(REGULATOR_5V_ALL);
+		regulator_5v_usb_src_enable(true);
+	}
 
 	_usbh_init_host_clocks();
 	bpmp_clk_rate_relaxed(false);
@@ -1472,7 +1476,7 @@ static int _usbh_hc_init(const void *fw, u32 fw_size)
 
 /* ---------- public API -------------------------------------------------- */
 
-int usbh_init(const void *fw, u32 fw_size, u32 timeout_ms)
+int usbh_init(const void *fw, u32 fw_size, u32 timeout_ms, bool source_vbus)
 {
 	usbh_ctxt_t *cx = &usbh_ctxt;
 	int res;
@@ -1483,7 +1487,7 @@ int usbh_init(const void *fw, u32 fw_size, u32 timeout_ms)
 	if (!cx->initialized)
 	{
 		memset(cx, 0, sizeof(*cx));
-		res = _usbh_hc_init(fw, fw_size);
+		res = _usbh_hc_init(fw, fw_size, source_vbus);
 		if (res)
 		{
 			usbh_deinit();

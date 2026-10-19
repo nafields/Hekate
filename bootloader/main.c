@@ -770,11 +770,12 @@ static bool _usb_storage_from_config(link_t *sections)
 
 	gfx_clear_grey(0x1B);
 	gfx_con_setpos(0, 0);
+	display_backlight_brightness(h_cfg.backlight, 1000);
 
-	bool usb_ok = usb_storage_init(3000) && usb_storage_set_primary(true);
+	// Long enough to unplug the injector and move the console into the dock.
+	bool usb_ok = usb_storage_wait(45000) && usb_storage_set_primary(true);
 	if (!usb_ok)
 	{
-		display_backlight_brightness(h_cfg.backlight, 1000);
 		WPRINTF("\nUSB drive not found or unusable!\nUsing SD card as main storage...");
 		msleep(3000);
 	}

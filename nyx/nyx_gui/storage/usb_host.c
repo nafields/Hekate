@@ -74,6 +74,14 @@ bool usb_host_is_ready(void)
 	return usbh_loaded && usbh.is_ready() && usbh.msc_get()->ready;
 }
 
+/* VBUS already driven from outside (dock or charger)? Then the console is a
+ * power sink and must not switch its own 5V onto the connector. */
+static bool _usb_host_vbus_present(void)
+{
+	u8 status = i2c_recv_byte(I2C_1, BQ24193_I2C_ADDR, BQ24193_Status);
+	return (status & (BQ24193_STATUS_VBUS_MASK | BQ24193_STATUS_PG_MASK)) != 0;
+}
+
 bool usb_host_init(u32 timeout_ms, const char **error_out)
 {
 	const char *error = NULL;
@@ -100,7 +108,7 @@ bool usb_host_init(u32 timeout_ms, const char **error_out)
 		fw = (const void *)USBH_FW_BUF_ADDR;
 	}
 
-	int res = usbh.init(fw, fw_size, timeout_ms);
+	int res = usbh.init(fw, fw_size, timeout_ms, !_usb_host_vbus_present());
 	if (res == USB_ERROR_TIMEOUT)
 		error = "No USB drive connected.";
 	else if (res)

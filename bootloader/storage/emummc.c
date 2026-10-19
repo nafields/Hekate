@@ -180,7 +180,7 @@ int emummc_storage_init_mmc()
 	if (emu_cfg.usb)
 	{
 		// Raw image on the USB drive. BOOT0 + BOOT1 + GPP must fit on it.
-		if (!emu_cfg.sector || !usb_storage_init(3000))
+		if (!emu_cfg.sector || !usb_storage_wait(45000))
 		{
 			EPRINTF("Failed to init USB emuMMC drive.");
 			goto out;

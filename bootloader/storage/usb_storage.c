@@ -29,6 +29,7 @@
 /* The XHCI/MSC drivers: a DRAM library loaded from the SD card. */
 static usbh_module_t usbh;
 static bool usbh_loaded = false;
+static bool usbh_sourcing_vbus = false; // Our 5V is on the connector.
 
 /* The SD card as FatFS volume 1 while the USB drive holds volume 0. */
 static FATFS sd_card_fs;
@@ -92,6 +93,14 @@ bool usb_storage_is_ready(void)
 	return usbh_loaded && usbh.is_ready() && usbh.msc_get()->ready;
 }
 
+/* VBUS already driven from outside (dock or charger)? Then the console is a
+ * power sink and must not switch its own 5V onto the connector. */
+static bool _usb_storage_vbus_present(void)
+{
+	u8 status = i2c_recv_byte(I2C_1, BQ24193_I2C_ADDR, BQ24193_Status);
+	return (status & (BQ24193_STATUS_VBUS_MASK | BQ24193_STATUS_PG_MASK)) != 0;
+}
+
 bool usb_storage_init(u32 timeout_ms)
 {
 	if (usb_storage_is_ready())
@@ -111,10 +120,41 @@ bool usb_storage_init(u32 timeout_ms)
 		fw = (const void *)USBH_FW_BUF_ADDR;
 	}
 
-	if (usbh.init(fw, fw_size, timeout_ms))
+	bool source_vbus = !_usb_storage_vbus_present();
+	if (usbh.init(fw, fw_size, timeout_ms, source_vbus))
 		return false;
 
+	usbh_sourcing_vbus = source_vbus;
 	return !usbh.msc_init();
+}
+
+bool usb_storage_wait(u32 timeout_ms)
+{
+	if (usb_storage_is_ready())
+		return true;
+
+	gfx_printf("%kConnect a USB drive or dock the console...%k\n(VOL- to skip)\n",
+		TXT_CLR_CYAN_L, TXT_CLR_DEFAULT);
+
+	for (u32 waited = 0; waited < timeout_ms; waited += 1000)
+	{
+		// Docked or charger plugged in while we were sourcing 5V: restart the
+		// host without it before probing again.
+		if (usbh_loaded && usbh.is_initialized() && usbh_sourcing_vbus && _usb_storage_vbus_present())
+			usbh.deinit();
+
+		if (usb_storage_init(1000))
+			return true;
+		if (btn_read_vol() & BTN_VOL_DOWN)
+			break;
+		// No driver module or firmware: nothing to wait for.
+		if (!usbh_loaded || !usbh.is_initialized())
+			break;
+		gfx_puts(".");
+	}
+	gfx_puts("\n");
+
+	return false;
 }
 
 usbh_ctxt_t *usb_storage_ctxt(void) { return usbh.get_ctxt(); }
@@ -191,4 +231,5 @@ void usb_storage_end(void)
 
 	if (usbh_loaded && usbh.is_initialized())
 		usbh.deinit();
+	usbh_sourcing_vbus = false;
 }

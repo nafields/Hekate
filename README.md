@@ -140,7 +140,7 @@ Creating one from Nyx: `emuMMC` -> `Create emuMMC` -> `USB Drive`, then choose `
 
 What Atmosphere receives in the exosphere emummc config: `base_cfg.type = 3`, `partition_cfg.start_sector = sector` (LBA on the USB drive, 512-byte sectors), `base_cfg.id`, `nintendo_path`. The drive is the first USB mass storage device reachable from the console (OTG adapter or dock hub).
 
-Nyx shows a USB emuMMC as such but cannot create, resize or share one over UMS yet.
+The Atmosphere side (an emummc module that reads the drive) is specified in [docs/usb_emummc_atmosphere.md](docs/usb_emummc_atmosphere.md).
 
 ### Boot entry key/value combinations:
 

@@ -204,12 +204,14 @@ typedef struct {
  * fw/fw_size:  Tegra210 XUSB Falcon firmware image. May be NULL if the
  *              firmware is already running (re-init without power cycle).
  * timeout_ms:  How long to wait for a device to connect.
+ * source_vbus: Drive 5V onto VBUS (OTG adapter, bus powered device). Must
+ *              be false when VBUS is already present (dock, charger).
  *
  * Returns USB_RES_OK when the MSC bulk pipes are configured. On
  * USB_ERROR_TIMEOUT no device was connected (controller stays up so that a
  * later call can retry quickly).
  */
-int  usbh_init(const void *fw, u32 fw_size, u32 timeout_ms);
+int  usbh_init(const void *fw, u32 fw_size, u32 timeout_ms, bool source_vbus);
 void usbh_deinit(void);
 
 bool usbh_is_initialized(void);

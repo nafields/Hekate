@@ -32,6 +32,11 @@
 bool usb_storage_init(u32 timeout_ms);
 bool usb_storage_is_ready(void);
 
+/* Like usb_storage_init() but shows a prompt, keeps probing for up to
+ * timeout_ms (long enough to move the console into the dock) and lets the
+ * user skip with VOL-. */
+bool usb_storage_wait(u32 timeout_ms);
+
 /* Driver state for the info page. Only valid while usb_storage_is_ready(). */
 usbh_ctxt_t *usb_storage_ctxt(void);
 usbh_msc_t  *usb_storage_msc(void);
