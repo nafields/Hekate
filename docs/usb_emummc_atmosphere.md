@@ -1,6 +1,6 @@
 # USB emuMMC: what Atmosphere needs
 
-Status: hekate side complete on this branch, untested on hardware. Atmosphere side not started.
+Status: hekate side complete on this branch, untested on hardware. Atmosphere side implemented on the `claude/usb-emummc-backend` branch of the Atmosphere fork (emummc USB backend, exosphere type 3, loader `usb_emummc_patches`), untested on hardware; the `usb` sysmodule patches are still to be written per Horizon version.
 
 ## Goal
 
@@ -15,7 +15,7 @@ Boot Atmosphere from a USB SSD/HDD in the dock: flip the RCM toggle, inject heka
 | 45 s wait for the drive with prompt, VOL- to skip; 5V only when no external VBUS | built |
 | USB emuMMC config (`usb_enabled=1`, `usb_based`), exosphere type 3, hekate reads package1 from it | built |
 | Nyx copies sysMMC or the active SD emuMMC to the drive | built |
-| Atmosphere reads the emuMMC from the drive | **not started** |
+| Atmosphere reads the emuMMC from the drive | built (Atmosphere branch), untested |
 
 Without any Atmosphere change the flow works with a normal SD emuMMC. With a USB emuMMC hekate refuses to launch HOS until `usb_atmosphere=1` is set in `emummc.ini`.
 
@@ -52,7 +52,9 @@ Port hekate's driver into the emummc module and have emummc own XUSB for the ses
 | DMA memory | static 4 KiB aligned buffers + `svcQueryPhysicalAddress` | as the SD driver; keep each buffer under 64 KiB |
 | Locking | mutex per BOT transaction | FS is multithreaded; HDD spin-up timeouts up to 10 s |
 
-Verify on hardware first: (1) SMMU: is XUSB_HOST's ASID in bypass under mesosphere without an attached device address space? If not, create one (`svcCreateDeviceAddressSpace`, `svcAttachDeviceAddressSpace`, `svcMapDeviceAddressSpaceAligned`) and use device addresses in TRBs. (2) `pcv`/`usb` must not gate XUSB clocks or the XUSBA/XUSBC partitions. (3) LP0 resets XUSB: re-initialise on first access after resume, or declare sleep unsupported in v1.
+Resolved while implementing: (1) mesosphere lists XUSB_HOST among the SMMU managed clients and parks it on a blocking ASID at boot, so the emummc module creates a device address space, attaches it to `DeviceName_XusbHost` and maps one ~800 KiB DMA block (rings, scratchpad, firmware, 256 KiB BOT staging) with `svcMapDeviceAddressSpaceAligned`; every address handed to the controller (TRBs, DCBAA, Falcon `ILOAD_BASE`) is a device address. (2) The PMC is not mappable from userland on 2.0.0+; partition power and clamp removal go through the secure monitor's register access SMC (`APBDEV_PMC_USB_AO` was added to its whitelist). (3) FS closes the eMMC controller on sleep; the module stops the host then and brings it back (firmware reload included) on the next access, so resume works while the drive stays connected.
+
+Still to verify on hardware: `pcv`/`usb` must not gate XUSB clocks or the XUSBA/XUSBC partitions, and the per-version `usb` sysmodule patches.
 
 ## The usb sysmodule
 
